@@ -9,9 +9,11 @@ import SwiftUI
 
 @main
 struct SnippetsApp: App {
+    @State private var journalTitles = WelcomeView.defaultJournalNames
+
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            WelcomeView(journalTitles: $journalTitles)
         }
     }
 }
