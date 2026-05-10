@@ -37,10 +37,13 @@ struct WelcomeView: View {
 
             ZStack {
                 HomeBackgroundLayer()
+                    .ignoresSafeArea()
 
                 VStack(spacing: 0) {
+                    welcomeTitleBar(metrics: metrics)
+
                     journalsSection(metrics: metrics)
-                        .padding(.top, metrics.topContentPadding)
+                        .padding(.top, metrics.titleToJournalsGap)
 
                     Spacer(minLength: metrics.contentToFooterSpacing)
 
@@ -51,7 +54,20 @@ struct WelcomeView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .ignoresSafeArea()
+    }
+
+    private func welcomeTitleBar(metrics: WelcomeMetrics) -> some View {
+        Text("Snippets")
+            .font(.system(size: metrics.titleFontSize, weight: .regular, design: .serif))
+            .foregroundStyle(WelcomePalette.accentYellow)
+            .lineLimit(1)
+            .minimumScaleFactor(0.82)
+            .padding(.horizontal, metrics.titleHorizontalReserve)
+            .accessibilityAddTraits(.isHeader)
+            .frame(maxWidth: .infinity)
+            .padding(.leading, metrics.headerLeadingPadding)
+            .padding(.trailing, metrics.headerTrailingPadding)
+            .padding(.top, metrics.headerTopPadding)
     }
 
     private func journalsSection(metrics: WelcomeMetrics) -> some View {
@@ -129,10 +145,34 @@ private struct WelcomeMetrics {
     /// Horizontal band (~76%) reserved for journals so desk props stay visible at the sides.
     var contentRailWidth: CGFloat { longSide * 0.76 }
 
-    /// Top inset for books + titles (includes safe area).
-    var topContentPadding: CGFloat {
-        safeArea.top + shortSide * 0.30
+    // MARK: Title strip (aligned with `PageLayoutView` “Page Style” header)
+
+    private var horizontalPad: CGFloat { shortSide * 0.045 }
+
+    var headerLeadingPadding: CGFloat {
+        max(horizontalPad, safeArea.leading + shortSide * 0.024)
     }
+
+    var headerTrailingPadding: CGFloat {
+        max(horizontalPad, safeArea.trailing + shortSide * 0.018)
+    }
+
+    var headerTopPadding: CGFloat {
+        safeArea.top + shortSide * 0.034 + 6
+    }
+
+    var titleFontSize: CGFloat {
+        min(max(shortSide * 0.068, 17), 26)
+    }
+
+    /// Matches Page Layout reserve (`homeTapSide + shortSide * 0.04`) for identical title inset.
+    private var referenceTapSide: CGFloat { max(48, shortSide * 0.11) }
+
+    var titleHorizontalReserve: CGFloat {
+        referenceTapSide + shortSide * 0.04
+    }
+
+    var titleToJournalsGap: CGFloat { shortSide * 0.026 }
 
     /// Single-line title row height (room for up to 15 characters).
     var labelFieldHeight: CGFloat {
@@ -221,7 +261,7 @@ private struct JournalColumn: View {
     var body: some View {
         VStack(spacing: metrics.labelGap) {
             Button(action: onCoverTap) {
-                JournalCover(style: coverStyle)
+                JournalCoverView(style: coverStyle)
                     .frame(width: metrics.journalWidth, height: metrics.journalHeight)
                     .rotationEffect(.degrees(rotationDegrees))
                     .shadow(color: .black.opacity(0.36), radius: 11, x: 5, y: 8)
@@ -240,81 +280,6 @@ private struct JournalColumn: View {
             .frame(maxWidth: .infinity)
         }
         .accessibilityElement(children: .contain)
-    }
-}
-
-// MARK: - Journal cover
-
-private enum JournalCoverStyle {
-    case brownLeather
-    case deepBlue
-    case richRed
-
-    fileprivate var base: Color {
-        switch self {
-        case .brownLeather:
-            return Color(red: 0.38, green: 0.24, blue: 0.15)
-        case .deepBlue:
-            return Color(red: 0.12, green: 0.28, blue: 0.50)
-        case .richRed:
-            return Color(red: 0.48, green: 0.12, blue: 0.16)
-        }
-    }
-
-    fileprivate var highlight: Color {
-        switch self {
-        case .brownLeather:
-            return Color(red: 0.52, green: 0.37, blue: 0.26)
-        case .deepBlue:
-            return Color(red: 0.28, green: 0.48, blue: 0.74)
-        case .richRed:
-            return Color(red: 0.72, green: 0.22, blue: 0.26)
-        }
-    }
-
-    fileprivate var deepShadow: Color {
-        switch self {
-        case .brownLeather:
-            return Color(red: 0.22, green: 0.13, blue: 0.09)
-        case .deepBlue:
-            return Color(red: 0.06, green: 0.14, blue: 0.30)
-        case .richRed:
-            return Color(red: 0.26, green: 0.06, blue: 0.09)
-        }
-    }
-}
-
-private struct JournalCover: View {
-    let style: JournalCoverStyle
-
-    private let cornerRadius: CGFloat = 14
-
-    var body: some View {
-        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-            .fill(
-                LinearGradient(
-                    colors: [style.highlight, style.base, style.deepShadow],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
-            }
-            .overlay {
-                LinearGradient(
-                    colors: [
-                        Color.white.opacity(0.22),
-                        Color.white.opacity(0.02),
-                        Color.black.opacity(0.08),
-                    ],
-                    startPoint: UnitPoint(x: 0.15, y: 0),
-                    endPoint: UnitPoint(x: 0.85, y: 1)
-                )
-                .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-                .blendMode(.softLight)
-            }
     }
 }
 

@@ -14,6 +14,8 @@
 		8963B3462FA5BF60000B8140 /* SnippetsUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8963B3452FA5BF60000B8140 /* SnippetsUITests.swift */; };
 		8963B3482FA5BF60000B8140 /* SnippetsUITestsLaunchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8963B3472FA5BF60000B8140 /* SnippetsUITestsLaunchTests.swift */; };
 		8963B3542FA5BF60000B8140 /* WelcomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8963B3552FA5BF60000B8140 /* WelcomeView.swift */; };
+		8963B35A2FA5BF60000B8140 /* JournalCoverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8963B35B2FA5BF60000B8140 /* JournalCoverView.swift */; };
+		8963B35C2FA5BF60000B8140 /* PageLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8963B35D2FA5BF60000B8140 /* PageLayout.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -45,6 +47,8 @@
 		8963B3452FA5BF60000B8140 /* SnippetsUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnippetsUITests.swift; sourceTree = "<group>"; };
 		8963B3472FA5BF60000B8140 /* SnippetsUITestsLaunchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnippetsUITestsLaunchTests.swift; sourceTree = "<group>"; };
 		8963B3552FA5BF60000B8140 /* WelcomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomeView.swift; sourceTree = "<group>"; };
+		8963B35B2FA5BF60000B8140 /* JournalCoverView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JournalCoverView.swift; sourceTree = "<group>"; };
+		8963B35D2FA5BF60000B8140 /* PageLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageLayout.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -96,7 +100,9 @@
 			isa = PBXGroup;
 			children = (
 				8963B3292FA5BF5E000B8140 /* SnippetsApp.swift */,
+				8963B35B2FA5BF60000B8140 /* JournalCoverView.swift */,
 				8963B3552FA5BF60000B8140 /* WelcomeView.swift */,
+				8963B35D2FA5BF60000B8140 /* PageLayout.swift */,
 				8963B32D2FA5BF60000B8140 /* Assets.xcassets */,
 				8963B32F2FA5BF60000B8140 /* Snippets.entitlements */,
 				8963B3302FA5BF60000B8140 /* Preview Content */,
@@ -259,7 +265,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				8963B35A2FA5BF60000B8140 /* JournalCoverView.swift in Sources */,
 				8963B3542FA5BF60000B8140 /* WelcomeView.swift in Sources */,
+				8963B35C2FA5BF60000B8140 /* PageLayout.swift in Sources */,
 				8963B32A2FA5BF5E000B8140 /* SnippetsApp.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
