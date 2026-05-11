@@ -16,15 +16,38 @@ struct SnippetsApp: App {
     }
 }
 
-/// Routes between welcome home and new-journal page layout.
+/// Routes between welcome, page layout, and canvas editor.
 struct SnippetsRootView: View {
     @State private var journalTitles = WelcomeView.defaultJournalNames
     @State private var showPageLayout = false
+    @State private var canvasSession: CanvasSession?
 
     var body: some View {
         Group {
-            if showPageLayout {
-                PageLayoutView(onHome: { showPageLayout = false })
+            if let session = canvasSession {
+                CanvasBookView(
+                    paperStyle: session.paperStyle,
+                    coverColors: session.coverColors,
+                    onHome: {
+                        canvasSession = nil
+                        showPageLayout = false
+                    },
+                    onBack: {
+                        canvasSession = nil
+                    }
+                )
+                .id(session.transitionId)
+            } else if showPageLayout {
+                PageLayoutView(
+                    onHome: { showPageLayout = false },
+                    onOpenCanvas: { paper, colors in
+                        canvasSession = CanvasSession(
+                            paperStyle: paper,
+                            coverColors: colors,
+                            transitionId: UUID()
+                        )
+                    }
+                )
             } else {
                 WelcomeView(
                     journalTitles: $journalTitles,
@@ -33,4 +56,10 @@ struct SnippetsRootView: View {
             }
         }
     }
+}
+
+private struct CanvasSession {
+    var paperStyle: JournalPaperStyle
+    var coverColors: JournalCoverColors
+    var transitionId: UUID
 }

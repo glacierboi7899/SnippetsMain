@@ -29,7 +29,7 @@ private enum CoverSwatch: Int, CaseIterable, Identifiable {
     case lightBlue
     case softPink
     case paleCream
-    case lightBeige
+    case charcoal
 
     var id: Int { rawValue }
 
@@ -44,112 +44,84 @@ private enum CoverSwatch: Int, CaseIterable, Identifiable {
         case .lightBlue: return "Light blue"
         case .softPink: return "Soft pink"
         case .paleCream: return "Pale cream"
-        case .lightBeige: return "Light beige"
+        case .charcoal: return "Charcoal"
         }
     }
 
-    /// Disk fill shown in the bar (approximation of cover hue).
+    /// sRGB components for the swatch disk — same anchor used for the center book gradient.
+    var rgb: (CGFloat, CGFloat, CGFloat) {
+        switch self {
+        case .white:
+            return (0.98, 0.98, 0.98)
+        case .teal:
+            return (0.18, 0.52, 0.56)
+        case .paleSage:
+            return (0.72, 0.80, 0.74)
+        case .lightLavender:
+            return (0.82, 0.78, 0.92)
+        case .tan:
+            return (0.82, 0.72, 0.56)
+        case .offWhite:
+            return (0.96, 0.95, 0.93)
+        case .lightBlue:
+            return (0.78, 0.88, 0.96)
+        case .softPink:
+            return (0.96, 0.82, 0.86)
+        case .paleCream:
+            return (0.98, 0.94, 0.84)
+        case .charcoal:
+            return (0.18, 0.17, 0.20)
+        }
+    }
+
     var diskColor: Color {
-        switch self {
-        case .white:
-            return Color(red: 0.98, green: 0.98, blue: 0.98)
-        case .teal:
-            return Color(red: 0.18, green: 0.52, blue: 0.56)
-        case .paleSage:
-            return Color(red: 0.72, green: 0.80, blue: 0.74)
-        case .lightLavender:
-            return Color(red: 0.82, green: 0.78, blue: 0.92)
-        case .tan:
-            return Color(red: 0.82, green: 0.72, blue: 0.56)
-        case .offWhite:
-            return Color(red: 0.96, green: 0.95, blue: 0.93)
-        case .lightBlue:
-            return Color(red: 0.78, green: 0.88, blue: 0.96)
-        case .softPink:
-            return Color(red: 0.96, green: 0.82, blue: 0.86)
-        case .paleCream:
-            return Color(red: 0.98, green: 0.94, blue: 0.84)
-        case .lightBeige:
-            return Color(red: 0.93, green: 0.88, blue: 0.78)
-        }
+        let t = rgb
+        return Color(red: t.0, green: t.1, blue: t.2)
     }
 
-    /// Gradient triple for `JournalCoverView`.
+    /// Leather-style gradient built from the same `rgb` as the disk so the book matches the tapped swatch.
     var coverColors: JournalCoverColors {
-        switch self {
-        case .white:
+        Self.coverGradient(from: rgb)
+    }
+
+    private static func coverGradient(from rgb: (CGFloat, CGFloat, CGFloat)) -> JournalCoverColors {
+        let (r, g, b) = rgb
+        let brightness = (r + g + b) / 3
+        if brightness > 0.94 {
             return JournalCoverColors(
-                highlight: Color(red: 1.0, green: 1.0, blue: 1.0),
-                base: Color(red: 0.88, green: 0.88, blue: 0.88),
-                deepShadow: Color(red: 0.62, green: 0.62, blue: 0.64)
-            )
-        case .teal:
-            return JournalCoverStyle.deepBlue.colors
-        case .paleSage:
-            return JournalCoverColors(
-                highlight: Color(red: 0.78, green: 0.88, blue: 0.82),
-                base: Color(red: 0.52, green: 0.68, blue: 0.58),
-                deepShadow: Color(red: 0.28, green: 0.42, blue: 0.34)
-            )
-        case .lightLavender:
-            return JournalCoverColors(
-                highlight: Color(red: 0.90, green: 0.86, blue: 0.98),
-                base: Color(red: 0.72, green: 0.66, blue: 0.88),
-                deepShadow: Color(red: 0.42, green: 0.36, blue: 0.58)
-            )
-        case .tan:
-            return JournalCoverColors(
-                highlight: Color(red: 0.92, green: 0.82, blue: 0.64),
-                base: Color(red: 0.74, green: 0.60, blue: 0.42),
-                deepShadow: Color(red: 0.48, green: 0.36, blue: 0.24)
-            )
-        case .offWhite:
-            return JournalCoverColors(
-                highlight: Color(red: 1.0, green: 0.99, blue: 0.97),
-                base: Color(red: 0.90, green: 0.88, blue: 0.84),
-                deepShadow: Color(red: 0.68, green: 0.66, blue: 0.62)
-            )
-        case .lightBlue:
-            return JournalCoverColors(
-                highlight: Color(red: 0.88, green: 0.94, blue: 1.0),
-                base: Color(red: 0.62, green: 0.78, blue: 0.92),
-                deepShadow: Color(red: 0.34, green: 0.52, blue: 0.72)
-            )
-        case .softPink:
-            return JournalCoverColors(
-                highlight: Color(red: 1.0, green: 0.88, blue: 0.90),
-                base: Color(red: 0.88, green: 0.62, blue: 0.72),
-                deepShadow: Color(red: 0.58, green: 0.32, blue: 0.44)
-            )
-        case .paleCream:
-            return JournalCoverColors(
-                highlight: Color(red: 1.0, green: 0.96, blue: 0.88),
-                base: Color(red: 0.92, green: 0.84, blue: 0.68),
-                deepShadow: Color(red: 0.72, green: 0.58, blue: 0.38)
-            )
-        case .lightBeige:
-            return JournalCoverColors(
-                highlight: Color(red: 0.96, green: 0.92, blue: 0.82),
-                base: Color(red: 0.82, green: 0.74, blue: 0.62),
-                deepShadow: Color(red: 0.56, green: 0.48, blue: 0.38)
+                highlight: Color(red: 1, green: 1, blue: 1),
+                base: Color(red: r, green: g, blue: b),
+                deepShadow: Color(red: max(r - 0.22, 0), green: max(g - 0.22, 0), blue: max(b - 0.24, 0))
             )
         }
+        if brightness < 0.32 {
+            return JournalCoverColors(
+                highlight: Color(red: min(r + 0.22, 1), green: min(g + 0.18, 1), blue: min(b + 0.20, 1)),
+                base: Color(red: r, green: g, blue: b),
+                deepShadow: Color(red: max(r * 0.45, 0), green: max(g * 0.42, 0), blue: max(b * 0.48, 0))
+            )
+        }
+        return JournalCoverColors(
+            highlight: Color(
+                red: min(r + 0.14, 1),
+                green: min(g + 0.16, 1),
+                blue: min(b + 0.14, 1)
+            ),
+            base: Color(red: r, green: g, blue: b),
+            deepShadow: Color(
+                red: max(r - 0.12, 0),
+                green: max(g - 0.22, 0),
+                blue: max(b - 0.22, 0)
+            )
+        )
     }
-}
-
-// MARK: - Page layout kinds
-
-private enum JournalPaperStyle: Int, CaseIterable, Hashable {
-    case blank
-    case dotted
-    case ruled
-    case grid
 }
 
 // MARK: - Screen
 
 struct PageLayoutView: View {
     var onHome: () -> Void
+    var onOpenCanvas: (JournalPaperStyle, JournalCoverColors) -> Void = { _, _ in }
 
     @State private var selectedSwatch: CoverSwatch = .teal
     @State private var selectedPaperStyle: JournalPaperStyle = .blank
@@ -171,28 +143,29 @@ struct PageLayoutView: View {
 
                     Spacer(minLength: m.contentToBarGap)
 
-                    bottomChrome(metrics: m)
+                    colorPickerBar(metrics: m)
+                        .padding(.bottom, m.colorBarBottomPadding)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
     }
 
-    private func bottomChrome(metrics: PageLayoutMetrics) -> some View {
-        VStack(alignment: .trailing, spacing: metrics.gapBelowColorBar) {
-            colorPickerBar(metrics: metrics)
+    /// Arrow sits to the right of the swatch pill (same row), slightly smaller than before.
+    private func continuationArrow(metrics: PageLayoutMetrics) -> some View {
+        let iconSize = metrics.bottomArrowIconSize
+        return ZStack {
+            Circle()
+                .fill(Color.white.opacity(0.94))
+                .frame(width: iconSize * 1.75, height: iconSize * 1.75)
+                .shadow(color: .black.opacity(0.2), radius: 4, x: 0, y: 2)
 
-            HStack {
-                Spacer(minLength: 0)
-                Image(systemName: "arrow.right")
-                    .font(.system(size: metrics.bottomArrowIconSize, weight: .semibold))
-                    .foregroundStyle(PageLayoutTheme.accentYellow)
-            }
-            .padding(.trailing, metrics.horizontalPad)
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel(Text("Continue"))
+            Image(systemName: "arrow.right")
+                .font(.system(size: iconSize, weight: .bold))
+                .foregroundStyle(Color(red: 0.12, green: 0.12, blue: 0.14))
         }
-        .padding(.bottom, metrics.barBottomPadding)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(Text("Continue"))
     }
 
     private func headerBar(metrics: PageLayoutMetrics) -> some View {
@@ -275,40 +248,52 @@ struct PageLayoutView: View {
     private func colorPickerBar(metrics: PageLayoutMetrics) -> some View {
         HStack {
             Spacer(minLength: 0)
-            HStack(spacing: metrics.swatchSpacing) {
-                ForEach(CoverSwatch.allCases, id: \.self) { swatch in
-                    Button {
-                        selectedSwatch = swatch
-                    } label: {
-                        Circle()
-                            .fill(swatch.diskColor)
-                            .frame(width: metrics.swatchDiameter, height: metrics.swatchDiameter)
-                            .overlay {
-                                Circle()
-                                    .stroke(
-                                        selectedSwatch == swatch ? PageLayoutTheme.selectionRing : Color.clear,
-                                        lineWidth: metrics.selectionRingWidth
-                                    )
-                            }
-                            .overlay {
-                                if swatch == .white || swatch == .offWhite {
+            HStack(alignment: .center, spacing: metrics.paletteArrowSpacing) {
+                HStack(spacing: metrics.swatchSpacing) {
+                    ForEach(CoverSwatch.allCases, id: \.self) { swatch in
+                        Button {
+                            selectedSwatch = swatch
+                        } label: {
+                            Circle()
+                                .fill(swatch.diskColor)
+                                .frame(width: metrics.swatchDiameter, height: metrics.swatchDiameter)
+                                .overlay {
                                     Circle()
-                                        .stroke(Color.gray.opacity(0.35), lineWidth: 1)
+                                        .stroke(
+                                            selectedSwatch == swatch ? PageLayoutTheme.selectionRing : Color.clear,
+                                            lineWidth: metrics.selectionRingWidth
+                                        )
                                 }
-                            }
+                                .overlay {
+                                    if swatch == .white || swatch == .offWhite {
+                                        Circle()
+                                            .stroke(Color.gray.opacity(0.35), lineWidth: 1)
+                                    } else if swatch == .charcoal {
+                                        Circle()
+                                            .stroke(Color.white.opacity(0.28), lineWidth: 1)
+                                    }
+                                }
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(Text(swatch.accessibilityTitle))
+                        .accessibilityValue(Text(selectedSwatch == swatch ? "Selected" : "Not selected"))
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(Text(swatch.accessibilityTitle))
-                    .accessibilityValue(Text(selectedSwatch == swatch ? "Selected" : "Not selected"))
                 }
+                .padding(.horizontal, metrics.barHorizontalPadding)
+                .padding(.vertical, metrics.barVerticalPadding)
+                .background(
+                    RoundedRectangle(cornerRadius: metrics.barCornerRadius, style: .continuous)
+                        .fill(PageLayoutTheme.barBackground)
+                        .shadow(color: .black.opacity(0.08), radius: 8, x: 0, y: 3)
+                )
+
+                Button {
+                    onOpenCanvas(selectedPaperStyle, selectedSwatch.coverColors)
+                } label: {
+                    continuationArrow(metrics: metrics)
+                }
+                .buttonStyle(.plain)
             }
-            .padding(.horizontal, metrics.barHorizontalPadding)
-            .padding(.vertical, metrics.barVerticalPadding)
-            .background(
-                RoundedRectangle(cornerRadius: metrics.barCornerRadius, style: .continuous)
-                    .fill(PageLayoutTheme.barBackground)
-                    .shadow(color: .black.opacity(0.08), radius: 8, x: 0, y: 3)
-            )
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity)
@@ -361,7 +346,12 @@ private struct PageLayoutMetrics {
 
     var contentToBarGap: CGFloat { shortSide * 0.024 }
 
-    var barBottomPadding: CGFloat { safeArea.bottom + shortSide * 0.032 }
+    var colorBarBottomPadding: CGFloat {
+        safeArea.bottom + shortSide * 0.028
+    }
+
+    /// Space between the swatch pill and the continue arrow.
+    var paletteArrowSpacing: CGFloat { max(12, shortSide * 0.032) }
 
     /// Prior layout reduced by 30%.
     private static let centerBookScale: CGFloat = 0.7
@@ -397,11 +387,10 @@ private struct PageLayoutMetrics {
 
     var selectionRingWidth: CGFloat { 3.5 }
 
-    /// Space between the color pill and the bottom arrow row.
-    var gapBelowColorBar: CGFloat { max(18, shortSide * 0.048) }
-
+    /// Arrow chip: 20% smaller than the last overlay sizing (`× 0.8`).
     var bottomArrowIconSize: CGFloat {
-        clamp(shortSide * 0.058, min: 22, max: 30)
+        let base = clamp(shortSide * 0.058, min: 22, max: 30)
+        return clamp(base * 1.5 * 0.8, min: 26, max: 38)
     }
 }
 
@@ -430,7 +419,7 @@ private struct PageStyleThumbnailView: View {
     let size: CGSize
 
     private var paperFill: Color {
-        Color(red: 0.97, green: 0.94, blue: 0.86)
+        JournalPaperStyle.journalPagePaperFill
     }
 
     private var spineStroke: Color {
@@ -471,13 +460,16 @@ private struct PageStyleThumbnailView: View {
             case .blank:
                 break
             case .dotted:
-                let step: CGFloat = max(5, inner.width / 16)
-                var rowY = inner.minY + step * 0.55
-                while rowY < inner.maxY - step * 0.45 {
-                    var colX = inner.minX + step * 0.55
-                    while colX < inner.maxX - step * 0.45 {
-                        let dotRect = CGRect(x: colX - 0.65, y: rowY - 0.65, width: 1.3, height: 1.3)
-                        context.fill(Path(ellipseIn: dotRect), with: .color(Color.gray.opacity(0.38)))
+                let minDim = min(inner.width, inner.height)
+                let step = JournalPaperStyle.journalDottedGridStep(minInnerDimension: minDim)
+                let dotR = JournalPaperStyle.journalDottedGridDotRadius(step: step)
+                let dotColor = JournalPaperStyle.journalDottedGridDotColor
+                var rowY = inner.minY + step * 0.5
+                while rowY <= inner.maxY - dotR {
+                    var colX = inner.minX + step * 0.5
+                    while colX <= inner.maxX - dotR {
+                        let dotRect = CGRect(x: colX - dotR, y: rowY - dotR, width: dotR * 2, height: dotR * 2)
+                        context.fill(Path(ellipseIn: dotRect), with: .color(dotColor))
                         colX += step
                     }
                     rowY += step
