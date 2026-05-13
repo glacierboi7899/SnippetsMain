@@ -21,9 +21,9 @@ extension JournalPaperStyle {
         Color(red: 0.97, green: 0.94, blue: 0.86)
     }
 
-    /// A few tonal steps darker than the cream paper so dots stay subtle.
+    /// Dot grid on cream paper (`#b6ac85`).
     static var journalDottedGridDotColor: Color {
-        Color(red: 0.97 - 0.024, green: 0.94 - 0.024, blue: 0.86 - 0.024)
+        Color(red: 182 / 255, green: 172 / 255, blue: 133 / 255)
     }
 
     static func journalDottedGridStep(minInnerDimension: CGFloat) -> CGFloat {

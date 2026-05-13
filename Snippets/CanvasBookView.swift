@@ -2,7 +2,7 @@
 //  CanvasBookView.swift
 //  Snippets
 //
-//  Full-bleed canvas with open book spread and opening-cover animation.
+//  Full-bleed canvas with open book spread (selected layout).
 //
 
 import SwiftUI
@@ -11,49 +11,26 @@ import SwiftUI
 
 struct CanvasBookView: View {
     let paperStyle: JournalPaperStyle
-    let coverColors: JournalCoverColors
     var onHome: () -> Void
     var onBack: () -> Void
-
-    @State private var bookOpened = false
-    /// After covers finish swinging open, hide them so they never read as a second “closing” crossfade.
-    @State private var coversDismissed = false
 
     var body: some View {
         GeometryReader { proxy in
             let m = CanvasBookMetrics(size: proxy.size, safeArea: proxy.safeAreaInsets)
+            let spreadSize = m.bookSpreadSizeFitting(available: proxy.size)
 
             ZStack {
                 canvasBackgroundLayer()
 
-                VStack(spacing: 0) {
+                bookStage(spreadSize: spreadSize, metrics: m)
+                    .position(x: proxy.size.width * 0.5, y: proxy.size.height * 0.5)
+
+                VStack {
                     canvasHeaderBar(metrics: m)
-                    ZStack {
-                        bookStage(metrics: m)
-                            .padding(.horizontal, m.bookStageHorizontalPadding)
-                            .padding(.top, m.bookStageTopPadding)
-                            .padding(.bottom, m.bookStageBottomPadding)
-                            .padding(.vertical, m.bookShadowBreathingRoom)
-                            .padding(.horizontal, m.bookShadowBreathingRoomH)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-        }
-        .onAppear {
-            bookOpened = false
-            coversDismissed = false
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
-                withAnimation(.easeInOut(duration: 0.88)) {
-                    bookOpened = true
+                    Spacer(minLength: 0)
                 }
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.94) {
-                withAnimation(.easeOut(duration: 0.18)) {
-                    coversDismissed = true
-                }
-            }
+            .frame(width: proxy.size.width, height: proxy.size.height)
         }
     }
 
@@ -105,46 +82,18 @@ struct CanvasBookView: View {
         .padding(.top, metrics.headerTopPadding)
     }
 
-    private func bookStage(metrics: CanvasBookMetrics) -> some View {
-        let w = metrics.bookSpreadWidth
-        let h = metrics.bookSpreadHeight
+    private func bookStage(spreadSize: CGSize, metrics: CanvasBookMetrics) -> some View {
+        let w = spreadSize.width
+        let h = spreadSize.height
 
-        return ZStack {
-            OpenBookSpreadCanvas(style: paperStyle)
-                .frame(width: w, height: h)
-                .background(
-                    RoundedRectangle(cornerRadius: metrics.bookCornerRadius, style: .continuous)
-                        .fill(Color(red: 0.97, green: 0.94, blue: 0.86))
-                )
-                .clipShape(RoundedRectangle(cornerRadius: metrics.bookCornerRadius, style: .continuous))
-                .shadow(color: .black.opacity(0.26), radius: 14, x: 0, y: 8)
-
-            HStack(spacing: 0) {
-                coverFlap(isLeading: true, bookWidth: w, bookHeight: h, metrics: metrics)
-                coverFlap(isLeading: false, bookWidth: w, bookHeight: h, metrics: metrics)
-            }
-            .opacity(coversDismissed ? 0 : 1)
-            .allowsHitTesting(!coversDismissed)
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    private func coverFlap(isLeading: Bool, bookWidth: CGFloat, bookHeight: CGFloat, metrics: CanvasBookMetrics) -> some View {
-        // Spine hinges: left flap anchor.trailing, right .leading. These signs swing the outer edges away from the gutter (open).
-        let angle: Double = bookOpened ? (isLeading ? -108 : 108) : 0
-        let anchor: UnitPoint = isLeading ? .trailing : .leading
-
-        return JournalCoverView(colors: coverColors, cornerRadius: metrics.bookCornerRadius)
-            .frame(width: bookWidth, height: bookHeight)
-            .frame(width: bookWidth * 0.5, height: bookHeight, alignment: isLeading ? .leading : .trailing)
-            .clipped()
-            .rotation3DEffect(
-                .degrees(angle),
-                axis: (x: 0, y: 1, z: 0),
-                anchor: anchor,
-                anchorZ: 0,
-                perspective: 0.42
+        return OpenBookSpreadCanvas(style: paperStyle)
+            .frame(width: w, height: h)
+            .background(
+                RoundedRectangle(cornerRadius: metrics.bookCornerRadius, style: .continuous)
+                    .fill(JournalPaperStyle.journalPagePaperFill)
             )
+            .clipShape(RoundedRectangle(cornerRadius: metrics.bookCornerRadius, style: .continuous))
+            .shadow(color: .black.opacity(0.22), radius: 10, x: 0, y: 6)
     }
 }
 
@@ -177,25 +126,37 @@ private struct CanvasBookMetrics {
 
     var homeIconVerticalLift: CGFloat { -shortSide * 0.032 - 15 }
 
-    /// Extra vertical space inside the flexible book region so shadow + 3D rotation stay inside the layout.
-    var bookShadowBreathingRoom: CGFloat { max(22, shortSide * 0.056) }
+    /// Horizontal inset when fitting the spread so shadows stay inside the safe width.
+    var bookFitHorizontalInset: CGFloat { max(20, shortSide * 0.055) }
 
-    /// Extra horizontal inset beyond `bookStageHorizontalPadding` so the spread never clips at the sides.
-    var bookShadowBreathingRoomH: CGFloat { max(10, shortSide * 0.026) }
+    /// Vertical inset when fitting the spread (safe areas + shadow).
+    var bookFitVerticalInset: CGFloat { max(16, shortSide * 0.036) }
 
-    /// Extra room so shadow and 3D rotation are not clipped at the sides.
-    var bookStageHorizontalPadding: CGFloat { max(22, shortSide * 0.062) }
-
-    var bookStageTopPadding: CGFloat { shortSide * 0.014 }
-
-    var bookStageBottomPadding: CGFloat { max(32, shortSide * 0.068) }
-
-    var bookSpreadWidth: CGFloat {
-        min(longSide * 0.678, shortSide * 1.28)
+    /// Preferred spread width before fitting to the available rect.
+    var bookSpreadWidthIdeal: CGFloat {
+        min(longSide * 0.72, shortSide * 1.32)
     }
 
-    var bookSpreadHeight: CGFloat {
-        bookSpreadWidth * 0.62
+    var bookSpreadAspect: CGFloat { 0.62 }
+
+    /// Scales the ideal open-book size down so it fits the screen without clipping (including shadow margin).
+    func bookSpreadSizeFitting(available: CGSize) -> CGSize {
+        let shadowSlop: CGFloat = 22
+        let maxW = max(
+            100,
+            available.width - 2 * bookFitHorizontalInset - safeArea.leading - safeArea.trailing
+        )
+        let maxH = max(
+            72,
+            available.height - 2 * bookFitVerticalInset - safeArea.top - safeArea.bottom - shadowSlop
+        )
+        var w = min(bookSpreadWidthIdeal, maxW)
+        var h = w * bookSpreadAspect
+        if h > maxH {
+            h = maxH
+            w = h / bookSpreadAspect
+        }
+        return CGSize(width: w, height: h)
     }
 
     var bookCornerRadius: CGFloat { 12 }
@@ -303,7 +264,6 @@ private struct OpenBookSpreadCanvas: View {
 #Preview("Canvas — dotted") {
     CanvasBookView(
         paperStyle: .dotted,
-        coverColors: JournalCoverStyle.deepBlue.colors,
         onHome: {},
         onBack: {}
     )

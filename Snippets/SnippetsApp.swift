@@ -27,7 +27,6 @@ struct SnippetsRootView: View {
             if let session = canvasSession {
                 CanvasBookView(
                     paperStyle: session.paperStyle,
-                    coverColors: session.coverColors,
                     onHome: {
                         canvasSession = nil
                         showPageLayout = false
