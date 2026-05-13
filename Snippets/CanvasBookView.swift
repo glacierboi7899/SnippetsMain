@@ -14,19 +14,49 @@ struct CanvasBookView: View {
     var onHome: () -> Void
     var onBack: () -> Void
 
+    @State private var crayonToolActive = false
+    @State private var completedStrokes: [[CGPoint]] = []
+    @State private var redoStrokeStack: [[CGPoint]] = []
+    @State private var currentStroke: [CGPoint] = []
+
     var body: some View {
         GeometryReader { proxy in
             let m = CanvasBookMetrics(size: proxy.size, safeArea: proxy.safeAreaInsets)
             let spreadSize = m.bookSpreadSizeFitting(available: proxy.size)
+            let crayonSize = m.crayonToolSide(forBookHeight: spreadSize.height)
+            let bookCenter = CGPoint(x: proxy.size.width * 0.5, y: proxy.size.height * 0.5)
+            let crayonCenter = m.crayonToolCenter(
+                bookCenter: bookCenter,
+                spreadWidth: spreadSize.width,
+                crayonSize: crayonSize
+            )
 
             ZStack {
                 canvasBackgroundLayer()
 
-                bookStage(spreadSize: spreadSize, metrics: m)
-                    .position(x: proxy.size.width * 0.5, y: proxy.size.height * 0.5)
+                bookStage(
+                    spreadSize: spreadSize,
+                    metrics: m,
+                    crayonToolActive: crayonToolActive,
+                    completedStrokes: $completedStrokes,
+                    redoStrokeStack: $redoStrokeStack,
+                    currentStroke: $currentStroke
+                )
+                .position(x: bookCenter.x, y: bookCenter.y)
+
+                crayonToolButton(size: crayonSize, isActive: crayonToolActive) {
+                    crayonToolActive.toggle()
+                }
+                .position(x: crayonCenter.x, y: crayonCenter.y)
 
                 VStack {
-                    canvasHeaderBar(metrics: m)
+                    canvasHeaderBar(
+                        metrics: m,
+                        canUndo: !completedStrokes.isEmpty && currentStroke.isEmpty,
+                        canRedo: !redoStrokeStack.isEmpty && currentStroke.isEmpty,
+                        onUndo: undoLastStroke,
+                        onRedo: redoLastStroke
+                    )
                     Spacer(minLength: 0)
                 }
             }
@@ -44,7 +74,13 @@ struct CanvasBookView: View {
             .accessibilityHidden(true)
     }
 
-    private func canvasHeaderBar(metrics: CanvasBookMetrics) -> some View {
+    private func canvasHeaderBar(
+        metrics: CanvasBookMetrics,
+        canUndo: Bool,
+        canRedo: Bool,
+        onUndo: @escaping () -> Void,
+        onRedo: @escaping () -> Void
+    ) -> some View {
         ZStack {
             HStack(spacing: metrics.headerIconSpacing) {
                 Button(action: onHome) {
@@ -75,6 +111,32 @@ struct CanvasBookView: View {
                 .accessibilityLabel(Text("Back to page layout"))
 
                 Spacer(minLength: 0)
+
+                HStack(spacing: metrics.undoRedoSpacing) {
+                    Button(action: onUndo) {
+                        Image(systemName: "arrow.uturn.backward")
+                            .font(.system(size: metrics.undoRedoIconSize, weight: .medium))
+                            .foregroundStyle(Color.black.opacity(canUndo ? 0.88 : 0.28))
+                            .frame(width: metrics.undoRedoTapSide, height: metrics.undoRedoTapSide)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canUndo)
+                    .offset(y: metrics.homeIconVerticalLift)
+                    .accessibilityLabel(Text("Undo"))
+
+                    Button(action: onRedo) {
+                        Image(systemName: "arrow.uturn.forward")
+                            .font(.system(size: metrics.undoRedoIconSize, weight: .medium))
+                            .foregroundStyle(Color.black.opacity(canRedo ? 0.88 : 0.28))
+                            .frame(width: metrics.undoRedoTapSide, height: metrics.undoRedoTapSide)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canRedo)
+                    .offset(y: metrics.homeIconVerticalLift)
+                    .accessibilityLabel(Text("Redo"))
+                }
             }
         }
         .padding(.leading, metrics.headerLeadingPadding)
@@ -82,18 +144,99 @@ struct CanvasBookView: View {
         .padding(.top, metrics.headerTopPadding)
     }
 
-    private func bookStage(spreadSize: CGSize, metrics: CanvasBookMetrics) -> some View {
+    private func undoLastStroke() {
+        guard currentStroke.isEmpty, let stroke = completedStrokes.popLast() else { return }
+        redoStrokeStack.append(stroke)
+    }
+
+    private func redoLastStroke() {
+        guard currentStroke.isEmpty, let stroke = redoStrokeStack.popLast() else { return }
+        completedStrokes.append(stroke)
+    }
+
+    private func crayonToolButton(size: CGFloat, isActive: Bool, action: @escaping () -> Void) -> some View {
+        let ringOutset: CGFloat = max(5, size * 0.055)
+        return Button(action: action) {
+            ZStack {
+                if isActive {
+                    Circle()
+                        .stroke(Color.black, lineWidth: 1.25)
+                        .frame(width: size + ringOutset, height: size + ringOutset)
+                }
+                // `bluecrayon` = `Assets.xcassets/bluecrayon.imageset`. SVG (especially with embedded raster) can look
+                // slightly softer than design tools—that is normal iOS rendering.
+                Image("bluecrayon")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: size, height: size)
+                    .shadow(color: .black.opacity(0.18), radius: 4, x: 0, y: 2)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text("Blue crayon"))
+        .accessibilityHint(Text("Tap to turn drawing on or off. When on, drag on the journal to draw."))
+        .accessibilityAddTraits(isActive ? .isSelected : [])
+    }
+
+    private func bookStage(
+        spreadSize: CGSize,
+        metrics: CanvasBookMetrics,
+        crayonToolActive: Bool,
+        completedStrokes: Binding<[[CGPoint]]>,
+        redoStrokeStack: Binding<[[CGPoint]]>,
+        currentStroke: Binding<[CGPoint]>
+    ) -> some View {
         let w = spreadSize.width
         let h = spreadSize.height
+        let strokeWidth = max(2.8, w * 0.0065)
+        let bookBounds = CGRect(origin: .zero, size: spreadSize)
 
-        return OpenBookSpreadCanvas(style: paperStyle)
-            .frame(width: w, height: h)
-            .background(
-                RoundedRectangle(cornerRadius: metrics.bookCornerRadius, style: .continuous)
-                    .fill(JournalPaperStyle.journalPagePaperFill)
+        return ZStack {
+            OpenBookSpreadCanvas(style: paperStyle)
+                .frame(width: w, height: h)
+
+            JournalStrokeOverlay(
+                completedStrokes: completedStrokes.wrappedValue,
+                currentStroke: currentStroke.wrappedValue,
+                strokeColor: JournalPaperStyle.journalBlueCrayonStroke,
+                lineWidth: strokeWidth
             )
-            .clipShape(RoundedRectangle(cornerRadius: metrics.bookCornerRadius, style: .continuous))
-            .shadow(color: .black.opacity(0.22), radius: 10, x: 0, y: 6)
+            .frame(width: w, height: h)
+            .allowsHitTesting(false)
+
+            Color.clear
+                .frame(width: w, height: h)
+                .contentShape(Rectangle())
+                .allowsHitTesting(crayonToolActive)
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            guard crayonToolActive else { return }
+                            let p = value.location
+                            guard bookBounds.contains(p) else { return }
+                            if let last = currentStroke.wrappedValue.last {
+                                let dx = p.x - last.x
+                                let dy = p.y - last.y
+                                if (dx * dx + dy * dy) < 0.8 { return }
+                            }
+                            currentStroke.wrappedValue.append(p)
+                        }
+                        .onEnded { _ in
+                            guard crayonToolActive else { return }
+                            if !currentStroke.wrappedValue.isEmpty {
+                                completedStrokes.wrappedValue.append(currentStroke.wrappedValue)
+                                redoStrokeStack.wrappedValue = []
+                            }
+                            currentStroke.wrappedValue = []
+                        }
+                )
+        }
+        .background(
+            RoundedRectangle(cornerRadius: metrics.bookCornerRadius, style: .continuous)
+                .fill(JournalPaperStyle.journalPagePaperFill)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: metrics.bookCornerRadius, style: .continuous))
+        .shadow(color: .black.opacity(0.22), radius: 10, x: 0, y: 6)
     }
 }
 
@@ -144,7 +287,7 @@ private struct CanvasBookMetrics {
         let shadowSlop: CGFloat = 22
         let maxW = max(
             100,
-            available.width - 2 * bookFitHorizontalInset - safeArea.leading - safeArea.trailing
+            available.width - 2 * bookFitHorizontalInset - safeArea.leading - safeArea.trailing - crayonColumnReserve
         )
         let maxH = max(
             72,
@@ -169,10 +312,80 @@ private struct CanvasBookMetrics {
     }
 
     var headerArrowChipDiameter: CGFloat { headerArrowIconSize * 1.75 }
+
+    var undoRedoIconSize: CGFloat { min(shortSide * 0.05, 24) }
+
+    var undoRedoTapSide: CGFloat { max(44, shortSide * 0.1) }
+
+    var undoRedoSpacing: CGFloat { shortSide * 0.01 }
+
+    /// Reserve horizontal space so the larger crayon can sit left of the book; keeps fitting honest.
+    var crayonColumnReserve: CGFloat {
+        min(shortSide * 0.48, 300) + max(12, shortSide * 0.03)
+    }
+
+    /// Tool size uses `bluecrayon` from the asset catalog, scaled ~3× from the previous base (capped by screen).
+    func crayonToolSide(forBookHeight bookH: CGFloat) -> CGFloat {
+        let base = clamp(bookH * 0.19, min: 44, max: 88)
+        let tripled = base * 3
+        let maxAllowed = min(shortSide * 0.44, bookH * 0.72)
+        return min(tripled, max(72, maxAllowed))
+    }
+
+    func crayonToolGap(forCrayonSize crayonSize: CGFloat) -> CGFloat {
+        max(10, crayonSize * 0.14)
+    }
+
+    func crayonToolCenter(bookCenter: CGPoint, spreadWidth: CGFloat, crayonSize: CGFloat) -> CGPoint {
+        let gap = crayonToolGap(forCrayonSize: crayonSize)
+        let bookLeft = bookCenter.x - spreadWidth * 0.5
+        let nudgeLeft = max(10, shortSide * 0.028)
+        let desiredX = bookLeft - gap - crayonSize * 0.5 - nudgeLeft
+        let minX = safeArea.leading + crayonSize * 0.5 + 6
+        return CGPoint(x: max(minX, desiredX), y: bookCenter.y)
+    }
 }
 
 private func clamp(_ value: CGFloat, min minValue: CGFloat, max maxValue: CGFloat) -> CGFloat {
     Swift.min(Swift.max(value, minValue), maxValue)
+}
+
+// MARK: - Drawing overlay
+
+private struct JournalStrokeOverlay: View {
+    let completedStrokes: [[CGPoint]]
+    let currentStroke: [CGPoint]
+    let strokeColor: Color
+    let lineWidth: CGFloat
+
+    var body: some View {
+        Canvas { context, size in
+            for stroke in completedStrokes {
+                drawStroke(stroke, in: &context)
+            }
+            drawStroke(currentStroke, in: &context)
+        }
+    }
+
+    private func drawStroke(_ stroke: [CGPoint], in context: inout GraphicsContext) {
+        guard !stroke.isEmpty else { return }
+        if stroke.count == 1, let p = stroke.first {
+            let r = lineWidth * 0.55
+            let dot = Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2))
+            context.fill(dot, with: .color(strokeColor))
+            return
+        }
+        var path = Path()
+        path.move(to: stroke[0])
+        for i in 1..<stroke.count {
+            path.addLine(to: stroke[i])
+        }
+        context.stroke(
+            path,
+            with: .color(strokeColor),
+            style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round)
+        )
+    }
 }
 
 // MARK: - Open spread drawing (same patterns as layout thumbnails)
