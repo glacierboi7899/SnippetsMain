@@ -7,29 +7,84 @@
 
 import SwiftUI
 
+// MARK: - Pasted items
+
+private struct PastedPhoto: Identifiable {
+    let id = UUID()
+    var center: CGPoint
+    var side: CGFloat
+}
+
+private struct PastedTapeStrip: Identifiable {
+    let id = UUID()
+    var center: CGPoint
+    var width: CGFloat
+    var height: CGFloat
+}
+
+private enum JournalUndoEntry {
+    case stroke([CGPoint])
+    case photo(PastedPhoto)
+    case tape(PastedTapeStrip)
+}
+
 // MARK: - Screen
 
 struct CanvasBookView: View {
     let paperStyle: JournalPaperStyle
     var onHome: () -> Void
     var onBack: () -> Void
+    /// Called once when the edit timer reaches zero (navigate to gallery, etc.).
+    var onTimerExpired: () -> Void = {}
 
     @State private var crayonToolActive = false
     @State private var completedStrokes: [[CGPoint]] = []
-    @State private var redoStrokeStack: [[CGPoint]] = []
     @State private var currentStroke: [CGPoint] = []
+
+    @State private var picAwaitingPlacement = false
+    @State private var pastedPhotos: [PastedPhoto] = []
+
+    @State private var tapeAwaitingPlacement = false
+    @State private var pastedTapes: [PastedTapeStrip] = []
+
+    @State private var undoStack: [JournalUndoEntry] = []
+    @State private var redoStack: [JournalUndoEntry] = []
+
+    /// Two-minute editing window; set on first tool activation (`nil` = not started).
+    @State private var editingDeadline: Date?
+    @State private var timerTick = Date()
+    @State private var didFireTimerExpiryCallback = false
+
+    private var editingLocked: Bool {
+        guard let deadline = editingDeadline else { return false }
+        return Date() >= deadline
+    }
 
     var body: some View {
         GeometryReader { proxy in
             let m = CanvasBookMetrics(size: proxy.size, safeArea: proxy.safeAreaInsets)
             let spreadSize = m.bookSpreadSizeFitting(available: proxy.size)
             let crayonSize = m.crayonToolSide(forBookHeight: spreadSize.height)
+            let picSize = m.picToolSide(forBookHeight: spreadSize.height)
+            let tapeSize = m.tapeToolSide(forBookHeight: spreadSize.height)
             let bookCenter = CGPoint(x: proxy.size.width * 0.5, y: proxy.size.height * 0.5)
-            let crayonCenter = m.crayonToolCenter(
-                bookCenter: bookCenter,
-                spreadWidth: spreadSize.width,
-                crayonSize: crayonSize
+            let bookLeft = bookCenter.x - spreadSize.width * 0.5
+            let toolGap = m.verticalToolStackGap(forBookHeight: spreadSize.height)
+            let journalMargin = m.journalLeftToolClearance(shortSide: min(proxy.size.width, proxy.size.height))
+            // Horizontal half-extent for pic (tilted ~35°); keep entire control left of the journal.
+            let picHalfWidth = picSize * 0.62
+            let tapeHalfWidth = tapeSize * 0.5
+            let toolsColumnX = bookLeft - journalMargin - max(picHalfWidth, tapeHalfWidth)
+            let tapeCenter = CGPoint(
+                x: toolsColumnX,
+                y: bookCenter.y - spreadSize.height * 0.12
             )
+            let picCenter = CGPoint(
+                x: toolsColumnX,
+                y: tapeCenter.y + tapeSize * 0.5 + toolGap + picSize * 0.5 + 20
+            )
+            // Extreme left; intentional partial bleed past the screen edge.
+            let crayonCenter = CGPoint(x: crayonSize * 0.38, y: bookCenter.y + spreadSize.height * 0.14)
 
             ZStack {
                 canvasBackgroundLayer()
@@ -37,31 +92,174 @@ struct CanvasBookView: View {
                 bookStage(
                     spreadSize: spreadSize,
                     metrics: m,
+                    editingLocked: editingLocked,
+                    editingDeadline: editingDeadline,
+                    timerTick: timerTick,
                     crayonToolActive: crayonToolActive,
-                    completedStrokes: $completedStrokes,
-                    redoStrokeStack: $redoStrokeStack,
-                    currentStroke: $currentStroke
+                    picAwaitingPlacement: picAwaitingPlacement,
+                    tapeAwaitingPlacement: tapeAwaitingPlacement,
+                    completedStrokes: completedStrokes,
+                    currentStroke: $currentStroke,
+                    pastedPhotos: pastedPhotos,
+                    pastedTapes: pastedTapes,
+                    onStrokeCommitted: commitStroke,
+                    onPastePhoto: { point in
+                        pastePhoto(at: point, bookSize: spreadSize, photoSide: picSize)
+                    },
+                    onPasteTape: { point in
+                        pasteTape(at: point, bookSize: spreadSize)
+                    }
                 )
+                // Pin layout to the spread so `.position` does not expand hit targets to the full screen
+                // (which was painting the journal fill over the canvas and breaking tap coordinates).
+                .frame(width: spreadSize.width, height: spreadSize.height)
                 .position(x: bookCenter.x, y: bookCenter.y)
 
-                crayonToolButton(size: crayonSize, isActive: crayonToolActive) {
-                    crayonToolActive.toggle()
+                picToolButton(size: picSize, isAwaitingPlacement: picAwaitingPlacement) {
+                    guard !editingLocked else { return }
+                    picAwaitingPlacement.toggle()
+                    if picAwaitingPlacement {
+                        startSessionTimerIfNeeded()
+                        crayonToolActive = false
+                        tapeAwaitingPlacement = false
+                    }
                 }
+                .disabled(editingLocked)
+                .rotationEffect(.degrees(-35))
+                .position(x: picCenter.x, y: picCenter.y)
+
+                crayonToolButton(size: crayonSize, isActive: crayonToolActive) {
+                    guard !editingLocked else { return }
+                    crayonToolActive.toggle()
+                    if crayonToolActive {
+                        startSessionTimerIfNeeded()
+                        picAwaitingPlacement = false
+                        tapeAwaitingPlacement = false
+                    }
+                }
+                .disabled(editingLocked)
                 .position(x: crayonCenter.x, y: crayonCenter.y)
+
+                tapeToolButton(size: tapeSize, isAwaitingPlacement: tapeAwaitingPlacement) {
+                    guard !editingLocked else { return }
+                    tapeAwaitingPlacement.toggle()
+                    if tapeAwaitingPlacement {
+                        startSessionTimerIfNeeded()
+                        crayonToolActive = false
+                        picAwaitingPlacement = false
+                    }
+                }
+                .disabled(editingLocked)
+                .position(x: tapeCenter.x, y: tapeCenter.y)
 
                 VStack {
                     canvasHeaderBar(
                         metrics: m,
-                        canUndo: !completedStrokes.isEmpty && currentStroke.isEmpty,
-                        canRedo: !redoStrokeStack.isEmpty && currentStroke.isEmpty,
-                        onUndo: undoLastStroke,
-                        onRedo: redoLastStroke
+                        canUndo: !undoStack.isEmpty && currentStroke.isEmpty && !editingLocked,
+                        canRedo: !redoStack.isEmpty && currentStroke.isEmpty && !editingLocked,
+                        onUndo: undoLastChange,
+                        onRedo: redoLastChange
                     )
                     Spacer(minLength: 0)
                 }
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
+            .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in
+                timerTick = Date()
+                if editingLocked {
+                    crayonToolActive = false
+                    picAwaitingPlacement = false
+                    tapeAwaitingPlacement = false
+                    if !currentStroke.isEmpty {
+                        currentStroke = []
+                    }
+                }
+            }
+            .onChange(of: editingLocked) { _, locked in
+                guard locked, editingDeadline != nil, !didFireTimerExpiryCallback else { return }
+                didFireTimerExpiryCallback = true
+                onTimerExpired()
+            }
         }
+    }
+
+    private func startSessionTimerIfNeeded() {
+        if editingDeadline == nil {
+            editingDeadline = Date().addingTimeInterval(120)
+        }
+    }
+
+    private func commitStroke(_ points: [CGPoint]) {
+        guard !points.isEmpty else { return }
+        completedStrokes.append(points)
+        undoStack.append(.stroke(points))
+        redoStack.removeAll()
+    }
+
+    private func pastePhoto(at location: CGPoint, bookSize: CGSize, photoSide: CGFloat) {
+        guard picAwaitingPlacement, !editingLocked else { return }
+        let side = min(photoSide, bookSize.width - 4, bookSize.height - 4)
+        let half = side * 0.5
+        let clamped = CGPoint(
+            x: min(max(location.x, half), bookSize.width - half),
+            y: min(max(location.y, half), bookSize.height - half)
+        )
+        let photo = PastedPhoto(center: clamped, side: side)
+        pastedPhotos.append(photo)
+        undoStack.append(.photo(photo))
+        redoStack.removeAll()
+        picAwaitingPlacement = false
+    }
+
+    private func pasteTape(at location: CGPoint, bookSize: CGSize) {
+        guard tapeAwaitingPlacement, !editingLocked else { return }
+        let width = min(bookSize.width * 0.42, bookSize.height * 0.38)
+        let height = width * 0.32
+        let hw = width * 0.5
+        let hh = height * 0.5
+        let clamped = CGPoint(
+            x: min(max(location.x, hw), bookSize.width - hw),
+            y: min(max(location.y, hh), bookSize.height - hh)
+        )
+        let strip = PastedTapeStrip(center: clamped, width: width, height: height)
+        pastedTapes.append(strip)
+        undoStack.append(.tape(strip))
+        redoStack.removeAll()
+        tapeAwaitingPlacement = false
+    }
+
+    private func applyUndo(_ entry: JournalUndoEntry) {
+        switch entry {
+        case .stroke:
+            _ = completedStrokes.popLast()
+        case .photo(let p):
+            pastedPhotos.removeAll { $0.id == p.id }
+        case .tape(let t):
+            pastedTapes.removeAll { $0.id == t.id }
+        }
+    }
+
+    private func applyRedo(_ entry: JournalUndoEntry) {
+        switch entry {
+        case .stroke(let pts):
+            completedStrokes.append(pts)
+        case .photo(let p):
+            pastedPhotos.append(p)
+        case .tape(let t):
+            pastedTapes.append(t)
+        }
+    }
+
+    private func undoLastChange() {
+        guard !editingLocked, currentStroke.isEmpty, let entry = undoStack.popLast() else { return }
+        applyUndo(entry)
+        redoStack.append(entry)
+    }
+
+    private func redoLastChange() {
+        guard !editingLocked, currentStroke.isEmpty, let entry = redoStack.popLast() else { return }
+        applyRedo(entry)
+        undoStack.append(entry)
     }
 
     private func canvasBackgroundLayer() -> some View {
@@ -144,47 +342,62 @@ struct CanvasBookView: View {
         .padding(.top, metrics.headerTopPadding)
     }
 
-    private func undoLastStroke() {
-        guard currentStroke.isEmpty, let stroke = completedStrokes.popLast() else { return }
-        redoStrokeStack.append(stroke)
-    }
-
-    private func redoLastStroke() {
-        guard currentStroke.isEmpty, let stroke = redoStrokeStack.popLast() else { return }
-        completedStrokes.append(stroke)
-    }
-
     private func crayonToolButton(size: CGFloat, isActive: Bool, action: @escaping () -> Void) -> some View {
-        let ringOutset: CGFloat = max(5, size * 0.055)
         return Button(action: action) {
-            ZStack {
-                if isActive {
-                    Circle()
-                        .stroke(Color.black, lineWidth: 1.25)
-                        .frame(width: size + ringOutset, height: size + ringOutset)
-                }
-                // `bluecrayon` = `Assets.xcassets/bluecrayon.imageset`. SVG (especially with embedded raster) can look
-                // slightly softer than design tools—that is normal iOS rendering.
-                Image("bluecrayon")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: size, height: size)
-                    .shadow(color: .black.opacity(0.18), radius: 4, x: 0, y: 2)
-            }
+            Image("bluecrayon")
+                .resizable()
+                .scaledToFit()
+                .frame(width: size, height: size)
+                .shadow(color: .black.opacity(0.18), radius: 4, x: 0, y: 2)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(Text("Blue crayon"))
         .accessibilityHint(Text("Tap to turn drawing on or off. When on, drag on the journal to draw."))
-        .accessibilityAddTraits(isActive ? .isSelected : [])
+    }
+
+    private func picToolButton(size: CGFloat, isAwaitingPlacement: Bool, action: @escaping () -> Void) -> some View {
+        return Button(action: action) {
+            Image("pic")
+                .resizable()
+                .scaledToFit()
+                .frame(width: size, height: size)
+                .shadow(color: .black.opacity(0.2), radius: 4, x: 0, y: 2)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text("Photo"))
+        .accessibilityHint(Text("Tap to select, then tap the journal to place the photo."))
+    }
+
+    private func tapeToolButton(size: CGFloat, isAwaitingPlacement: Bool, action: @escaping () -> Void) -> some View {
+        return Button(action: action) {
+            Image("tape")
+                .renderingMode(.original)
+                .resizable()
+                .scaledToFit()
+                .frame(width: size, height: size)
+                .shadow(color: .black.opacity(0.2), radius: 4, x: 0, y: 2)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text("Tape"))
+        .accessibilityHint(Text("Tap to select, then tap the journal to place coloured tape."))
     }
 
     private func bookStage(
         spreadSize: CGSize,
         metrics: CanvasBookMetrics,
+        editingLocked: Bool,
+        editingDeadline: Date?,
+        timerTick: Date,
         crayonToolActive: Bool,
-        completedStrokes: Binding<[[CGPoint]]>,
-        redoStrokeStack: Binding<[[CGPoint]]>,
-        currentStroke: Binding<[CGPoint]>
+        picAwaitingPlacement: Bool,
+        tapeAwaitingPlacement: Bool,
+        completedStrokes: [[CGPoint]],
+        currentStroke: Binding<[CGPoint]>,
+        pastedPhotos: [PastedPhoto],
+        pastedTapes: [PastedTapeStrip],
+        onStrokeCommitted: @escaping ([CGPoint]) -> Void,
+        onPastePhoto: @escaping (CGPoint) -> Void,
+        onPasteTape: @escaping (CGPoint) -> Void
     ) -> some View {
         let w = spreadSize.width
         let h = spreadSize.height
@@ -195,8 +408,17 @@ struct CanvasBookView: View {
             OpenBookSpreadCanvas(style: paperStyle)
                 .frame(width: w, height: h)
 
+            ForEach(pastedPhotos) { photo in
+                Image("pic")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: photo.side, height: photo.side)
+                    .position(photo.center)
+                    .allowsHitTesting(false)
+            }
+
             JournalStrokeOverlay(
-                completedStrokes: completedStrokes.wrappedValue,
+                completedStrokes: completedStrokes,
                 currentStroke: currentStroke.wrappedValue,
                 strokeColor: JournalPaperStyle.journalBlueCrayonStroke,
                 lineWidth: strokeWidth
@@ -204,14 +426,37 @@ struct CanvasBookView: View {
             .frame(width: w, height: h)
             .allowsHitTesting(false)
 
+            ForEach(pastedTapes) { strip in
+                Image("tapecoloured")
+                    .renderingMode(.original)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: strip.width, height: strip.height)
+                    .position(strip.center)
+                    .allowsHitTesting(false)
+            }
+
+            VStack {
+                JournalEditTimerBar(
+                    deadline: editingDeadline,
+                    referenceDate: timerTick,
+                    isLocked: editingLocked
+                )
+                .opacity(editingDeadline == nil ? 0.55 : 1)
+                .padding(.top, h * 0.03)
+                Spacer(minLength: 0)
+            }
+            .frame(width: w, height: h)
+            .allowsHitTesting(false)
+
             Color.clear
                 .frame(width: w, height: h)
                 .contentShape(Rectangle())
-                .allowsHitTesting(crayonToolActive)
+                .allowsHitTesting(crayonToolActive && !editingLocked)
                 .gesture(
                     DragGesture(minimumDistance: 0)
                         .onChanged { value in
-                            guard crayonToolActive else { return }
+                            guard crayonToolActive, !editingLocked else { return }
                             let p = value.location
                             guard bookBounds.contains(p) else { return }
                             if let last = currentStroke.wrappedValue.last {
@@ -222,15 +467,35 @@ struct CanvasBookView: View {
                             currentStroke.wrappedValue.append(p)
                         }
                         .onEnded { _ in
-                            guard crayonToolActive else { return }
+                            guard crayonToolActive, !editingLocked else { return }
                             if !currentStroke.wrappedValue.isEmpty {
-                                completedStrokes.wrappedValue.append(currentStroke.wrappedValue)
-                                redoStrokeStack.wrappedValue = []
+                                onStrokeCommitted(currentStroke.wrappedValue)
                             }
                             currentStroke.wrappedValue = []
                         }
                 )
+
+            Color.clear
+                .frame(width: w, height: h)
+                .contentShape(Rectangle())
+                .allowsHitTesting(
+                    (picAwaitingPlacement || tapeAwaitingPlacement) && !editingLocked && !crayonToolActive
+                )
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onEnded { value in
+                            guard !editingLocked, !crayonToolActive else { return }
+                            let p = value.location
+                            guard bookBounds.contains(p) else { return }
+                            if picAwaitingPlacement {
+                                onPastePhoto(p)
+                            } else if tapeAwaitingPlacement {
+                                onPasteTape(p)
+                            }
+                        }
+                )
         }
+        .frame(width: w, height: h)
         .background(
             RoundedRectangle(cornerRadius: metrics.bookCornerRadius, style: .continuous)
                 .fill(JournalPaperStyle.journalPagePaperFill)
@@ -319,9 +584,14 @@ private struct CanvasBookMetrics {
 
     var undoRedoSpacing: CGFloat { shortSide * 0.01 }
 
-    /// Reserve horizontal space so the larger crayon can sit left of the book; keeps fitting honest.
+    /// Reserve horizontal space so the open book does not swallow the left tool strip.
     var crayonColumnReserve: CGFloat {
-        min(shortSide * 0.48, 300) + max(12, shortSide * 0.03)
+        min(shortSide * 0.40, 280) + max(12, shortSide * 0.028)
+    }
+
+    /// Minimum gap between the journal’s left edge and the rightmost edge of pic/tape tools.
+    func journalLeftToolClearance(shortSide: CGFloat) -> CGFloat {
+        max(16, shortSide * 0.028)
     }
 
     /// Tool size uses `bluecrayon` from the asset catalog, scaled ~3× from the previous base (capped by screen).
@@ -332,22 +602,62 @@ private struct CanvasBookMetrics {
         return min(tripled, max(72, maxAllowed))
     }
 
-    func crayonToolGap(forCrayonSize crayonSize: CGFloat) -> CGFloat {
-        max(10, crayonSize * 0.14)
+    func verticalToolStackGap(forBookHeight bookH: CGFloat) -> CGFloat {
+        max(10, bookH * 0.034)
     }
 
-    func crayonToolCenter(bookCenter: CGPoint, spreadWidth: CGFloat, crayonSize: CGFloat) -> CGPoint {
-        let gap = crayonToolGap(forCrayonSize: crayonSize)
-        let bookLeft = bookCenter.x - spreadWidth * 0.5
-        let nudgeLeft = max(10, shortSide * 0.028)
-        let desiredX = bookLeft - gap - crayonSize * 0.5 - nudgeLeft
-        let minX = safeArea.leading + crayonSize * 0.5 + 6
-        return CGPoint(x: max(minX, desiredX), y: bookCenter.y)
+    /// Palette `pic` control — doubled from the prior 1.5× sizing (capped for layout).
+    func picToolSide(forBookHeight bookH: CGFloat) -> CGFloat {
+        let scaled = clamp(bookH * 0.225, min: 84, max: 150)
+        return min(scaled * 2, shortSide * 0.42, bookH * 0.52)
+    }
+
+    /// Palette `tape` control — 3× base so it stays visible like the reference.
+    func tapeToolSide(forBookHeight bookH: CGFloat) -> CGFloat {
+        let base = clamp(bookH * 0.11, min: 40, max: 76)
+        let scaled = min(base * 3, shortSide * 0.36, bookH * 0.5)
+        return max(48, scaled)
     }
 }
 
 private func clamp(_ value: CGFloat, min minValue: CGFloat, max maxValue: CGFloat) -> CGFloat {
     Swift.min(Swift.max(value, minValue), maxValue)
+}
+
+// MARK: - Edit session timer (on journal)
+
+private struct JournalEditTimerBar: View {
+    let deadline: Date?
+    let referenceDate: Date
+    let isLocked: Bool
+
+    private var displaySeconds: Int {
+        if isLocked { return 0 }
+        guard let deadline else { return 120 }
+        return max(0, Int(ceil(deadline.timeIntervalSince(referenceDate))))
+    }
+
+    var body: some View {
+        let minutes = displaySeconds / 60
+        let seconds = displaySeconds % 60
+        HStack(spacing: 10) {
+            Image(systemName: "stopwatch")
+                .font(.system(size: 17, weight: .semibold))
+            Text(String(format: "%02d : %02d", minutes, seconds))
+                .font(.system(size: 20, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+        }
+        .foregroundStyle(Color.black)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 9)
+        .background(
+            Capsule(style: .continuous)
+                .fill(Color.white)
+                .shadow(color: Color.black.opacity(0.14), radius: 4, x: 0, y: 2)
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(Text("Editing time remaining"))
+    }
 }
 
 // MARK: - Drawing overlay
@@ -478,7 +788,8 @@ private struct OpenBookSpreadCanvas: View {
     CanvasBookView(
         paperStyle: .dotted,
         onHome: {},
-        onBack: {}
+        onBack: {},
+        onTimerExpired: {}
     )
     .previewInterfaceOrientation(.landscapeLeft)
 }

@@ -20,19 +20,34 @@ struct SnippetsApp: App {
 struct SnippetsRootView: View {
     @State private var journalTitles = WelcomeView.defaultJournalNames
     @State private var showPageLayout = false
+    @State private var showGallery = false
     @State private var canvasSession: CanvasSession?
 
     var body: some View {
         Group {
-            if let session = canvasSession {
+            if showGallery {
+                GalleryView(
+                    onHome: {
+                        showGallery = false
+                        showPageLayout = false
+                        canvasSession = nil
+                    }
+                )
+            } else if let session = canvasSession {
                 CanvasBookView(
                     paperStyle: session.paperStyle,
                     onHome: {
                         canvasSession = nil
                         showPageLayout = false
+                        showGallery = false
                     },
                     onBack: {
                         canvasSession = nil
+                    },
+                    onTimerExpired: {
+                        canvasSession = nil
+                        showPageLayout = false
+                        showGallery = true
                     }
                 )
                 .id(session.transitionId)
