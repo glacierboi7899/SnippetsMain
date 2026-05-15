@@ -1,17 +1,17 @@
 {
   "images" : [
     {
-      "filename" : "bluecrayon.svg",
+      "filename" : "greencrayon.png",
       "idiom" : "universal",
       "scale" : "1x"
     },
     {
-      "filename" : "bluecrayon 1.svg",
+      "filename" : "greencrayon 1.png",
       "idiom" : "universal",
       "scale" : "2x"
     },
     {
-      "filename" : "bluecrayon 2.svg",
+      "filename" : "greencrayon 2.png",
       "idiom" : "universal",
       "scale" : "3x"
     }
