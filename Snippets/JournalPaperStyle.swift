@@ -34,8 +34,8 @@ extension JournalPaperStyle {
         max(0.65, min(step * 0.09, 2.1))
     }
 
-    /// Stroke colour for the blue crayon tool (matches the `bluecrayon` asset).
-    static var journalBlueCrayonStroke: Color {
-        Color(red: 0.09, green: 0.38, blue: 0.88)
+    /// Stroke colour for the green crayon tool (matches the `greencrayon` asset).
+    static var journalGreenCrayonStroke: Color {
+        Color(red: 0.12, green: 0.52, blue: 0.30)
     }
 }

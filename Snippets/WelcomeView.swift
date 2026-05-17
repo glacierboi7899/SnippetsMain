@@ -17,16 +17,19 @@ import UIKit
 struct WelcomeView: View {
     /// Display names for the three journals (brown, blue, red), index `0...2`.
     @Binding var journalTitles: [String]
+    @Binding var journalCoverColors: [JournalCoverColors]
 
     var onJournalSelected: (Int) -> Void
     var onAddJournal: () -> Void
 
     init(
         journalTitles: Binding<[String]>,
+        journalCoverColors: Binding<[JournalCoverColors]> = .constant(WelcomeView.defaultJournalCoverColors),
         onJournalSelected: @escaping (Int) -> Void = { _ in },
         onAddJournal: @escaping () -> Void = {}
     ) {
         _journalTitles = journalTitles
+        _journalCoverColors = journalCoverColors
         self.onJournalSelected = onJournalSelected
         self.onAddJournal = onAddJournal
     }
@@ -74,7 +77,7 @@ struct WelcomeView: View {
         HStack(alignment: .top, spacing: metrics.journalColumnSpacing) {
             JournalColumn(
                 title: bindingForJournalTitle(at: 0),
-                coverStyle: .brownLeather,
+                coverColors: coverColorsForJournal(at: 0, fallback: .brownLeather),
                 rotationDegrees: -10,
                 metrics: metrics,
                 onCoverTap: { onJournalSelected(0) }
@@ -83,7 +86,7 @@ struct WelcomeView: View {
 
             JournalColumn(
                 title: bindingForJournalTitle(at: 1),
-                coverStyle: .deepBlue,
+                coverColors: coverColorsForJournal(at: 1, fallback: .deepBlue),
                 rotationDegrees: 0,
                 metrics: metrics,
                 onCoverTap: { onJournalSelected(1) }
@@ -92,7 +95,7 @@ struct WelcomeView: View {
 
             JournalColumn(
                 title: bindingForJournalTitle(at: 2),
-                coverStyle: .richRed,
+                coverColors: coverColorsForJournal(at: 2, fallback: .richRed),
                 rotationDegrees: 10,
                 metrics: metrics,
                 onCoverTap: { onJournalSelected(2) }
@@ -115,6 +118,11 @@ struct WelcomeView: View {
             }
         )
     }
+
+    private func coverColorsForJournal(at index: Int, fallback: JournalCoverStyle) -> JournalCoverColors {
+        guard journalCoverColors.indices.contains(index) else { return fallback.colors }
+        return journalCoverColors[index]
+    }
 }
 
 extension WelcomeView {
@@ -125,6 +133,12 @@ extension WelcomeView {
         "Vacation Notes",
         "Daily Snippets",
         "Diary Sketches",
+    ]
+
+    static let defaultJournalCoverColors: [JournalCoverColors] = [
+        JournalCoverStyle.brownLeather.colors,
+        JournalCoverStyle.deepBlue.colors,
+        JournalCoverStyle.richRed.colors,
     ]
 }
 
@@ -253,7 +267,7 @@ private struct HomeBackgroundLayer: View {
 
 private struct JournalColumn: View {
     @Binding var title: String
-    let coverStyle: JournalCoverStyle
+    let coverColors: JournalCoverColors
     let rotationDegrees: Double
     let metrics: WelcomeMetrics
     let onCoverTap: () -> Void
@@ -261,7 +275,7 @@ private struct JournalColumn: View {
     var body: some View {
         VStack(spacing: metrics.labelGap) {
             Button(action: onCoverTap) {
-                JournalCoverView(style: coverStyle)
+                JournalCoverView(colors: coverColors)
                     .frame(width: metrics.journalWidth, height: metrics.journalHeight)
                     .rotationEffect(.degrees(rotationDegrees))
                     .shadow(color: .black.opacity(0.36), radius: 11, x: 5, y: 8)

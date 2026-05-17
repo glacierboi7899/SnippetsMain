@@ -6,6 +6,22 @@
 //
 
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
+#if os(macOS)
+import AppKit
+#endif
+
+private enum CanvasBookTheme {
+    static let stampPink = Color(red: 1.0, green: 0.38, blue: 0.66)
+}
+
+// MARK: - Edit session
+
+private enum CanvasEditSession {
+    static let durationSeconds: TimeInterval = 30
+}
 
 // MARK: - Pasted items
 
@@ -22,10 +38,17 @@ private struct PastedTapeStrip: Identifiable {
     var height: CGFloat
 }
 
+private struct PastedStamp: Identifiable {
+    let id = UUID()
+    var center: CGPoint
+    var side: CGFloat
+}
+
 private enum JournalUndoEntry {
     case stroke([CGPoint])
     case photo(PastedPhoto)
     case tape(PastedTapeStrip)
+    case stamp(PastedStamp)
 }
 
 // MARK: - Screen
@@ -34,8 +57,8 @@ struct CanvasBookView: View {
     let paperStyle: JournalPaperStyle
     var onHome: () -> Void
     var onBack: () -> Void
-    /// Called once when the edit timer reaches zero (navigate to gallery, etc.).
-    var onTimerExpired: () -> Void = {}
+    /// Called once when the edit timer reaches zero; includes a snapshot of the spread for the gallery.
+    var onTimerExpired: (CGImage?) -> Void = { _ in }
 
     @State private var crayonToolActive = false
     @State private var completedStrokes: [[CGPoint]] = []
@@ -47,10 +70,16 @@ struct CanvasBookView: View {
     @State private var tapeAwaitingPlacement = false
     @State private var pastedTapes: [PastedTapeStrip] = []
 
+    @State private var stampAwaitingPlacement = false
+    @State private var pastedStamps: [PastedStamp] = []
+
+    @State private var showingChecklist = false
+    @State private var checklistItemsChecked = Array(repeating: false, count: 3)
+
     @State private var undoStack: [JournalUndoEntry] = []
     @State private var redoStack: [JournalUndoEntry] = []
 
-    /// Two-minute editing window; set on first tool activation (`nil` = not started).
+    /// Timed editing window; set on first tool activation (`nil` = not started).
     @State private var editingDeadline: Date?
     @State private var timerTick = Date()
     @State private var didFireTimerExpiryCallback = false
@@ -67,8 +96,11 @@ struct CanvasBookView: View {
             let crayonSize = m.crayonToolSide(forBookHeight: spreadSize.height)
             let picSize = m.picToolSide(forBookHeight: spreadSize.height)
             let tapeSize = m.tapeToolSide(forBookHeight: spreadSize.height)
+            let stampSize = m.stampToolSide(forBookHeight: spreadSize.height)
+            let stickyNoteSize = m.stickyNoteToolSide(forBookHeight: spreadSize.height)
             let bookCenter = CGPoint(x: proxy.size.width * 0.5, y: proxy.size.height * 0.5)
             let bookLeft = bookCenter.x - spreadSize.width * 0.5
+            let bookRight = bookCenter.x + spreadSize.width * 0.5
             let toolGap = m.verticalToolStackGap(forBookHeight: spreadSize.height)
             let journalMargin = m.journalLeftToolClearance(shortSide: min(proxy.size.width, proxy.size.height))
             // Horizontal half-extent for pic (tilted ~35°); keep entire control left of the journal.
@@ -85,6 +117,21 @@ struct CanvasBookView: View {
             )
             // Extreme left; intentional partial bleed past the screen edge.
             let crayonCenter = CGPoint(x: crayonSize * 0.38, y: bookCenter.y + spreadSize.height * 0.14)
+            let rightToolX = m.rightToolCenterX(
+                bookRight: bookRight,
+                toolWidth: max(stampSize, stickyNoteSize),
+                availableWidth: proxy.size.width
+            )
+            let rightStackTop = bookCenter.y - (stampSize + toolGap + stickyNoteSize) * 0.5
+            let stampCenter = CGPoint(x: rightToolX, y: rightStackTop + stampSize * 0.5)
+            let stickyNoteCenter = CGPoint(
+                x: rightToolX,
+                y: rightStackTop + stampSize + toolGap + stickyNoteSize * 0.5
+            )
+            let timerCenterY = max(
+                proxy.safeAreaInsets.top + m.timerChipHeight * 0.5 + 4,
+                bookCenter.y - spreadSize.height * 0.5 - m.timerToBookGap - m.timerChipHeight * 0.5
+            )
 
             ZStack {
                 canvasBackgroundLayer()
@@ -93,27 +140,42 @@ struct CanvasBookView: View {
                     spreadSize: spreadSize,
                     metrics: m,
                     editingLocked: editingLocked,
-                    editingDeadline: editingDeadline,
-                    timerTick: timerTick,
                     crayonToolActive: crayonToolActive,
                     picAwaitingPlacement: picAwaitingPlacement,
                     tapeAwaitingPlacement: tapeAwaitingPlacement,
+                    stampAwaitingPlacement: stampAwaitingPlacement,
                     completedStrokes: completedStrokes,
                     currentStroke: $currentStroke,
                     pastedPhotos: pastedPhotos,
                     pastedTapes: pastedTapes,
+                    pastedStamps: pastedStamps,
                     onStrokeCommitted: commitStroke,
                     onPastePhoto: { point in
                         pastePhoto(at: point, bookSize: spreadSize, photoSide: picSize)
                     },
                     onPasteTape: { point in
                         pasteTape(at: point, bookSize: spreadSize)
+                    },
+                    onPasteStamp: { point in
+                        pasteStamp(at: point, bookSize: spreadSize, stampSide: m.stampPasteSide(forBookHeight: spreadSize.height))
                     }
                 )
                 // Pin layout to the spread so `.position` does not expand hit targets to the full screen
                 // (which was painting the journal fill over the canvas and breaking tap coordinates).
                 .frame(width: spreadSize.width, height: spreadSize.height)
                 .position(x: bookCenter.x, y: bookCenter.y)
+                .opacity(showingChecklist ? 0 : 1)
+
+                JournalEditTimerBar(
+                    deadline: editingDeadline,
+                    referenceDate: timerTick,
+                    isLocked: editingLocked,
+                    totalSessionSeconds: Int(CanvasEditSession.durationSeconds)
+                )
+                .opacity(editingDeadline == nil ? 0.55 : 1)
+                .allowsHitTesting(false)
+                .position(x: bookCenter.x, y: timerCenterY)
+                .opacity(showingChecklist ? 0 : 1)
 
                 picToolButton(size: picSize, isAwaitingPlacement: picAwaitingPlacement) {
                     guard !editingLocked else { return }
@@ -122,11 +184,13 @@ struct CanvasBookView: View {
                         startSessionTimerIfNeeded()
                         crayonToolActive = false
                         tapeAwaitingPlacement = false
+                        stampAwaitingPlacement = false
                     }
                 }
                 .disabled(editingLocked)
                 .rotationEffect(.degrees(-35))
                 .position(x: picCenter.x, y: picCenter.y)
+                .opacity(showingChecklist ? 0 : 1)
 
                 crayonToolButton(size: crayonSize, isActive: crayonToolActive) {
                     guard !editingLocked else { return }
@@ -135,10 +199,12 @@ struct CanvasBookView: View {
                         startSessionTimerIfNeeded()
                         picAwaitingPlacement = false
                         tapeAwaitingPlacement = false
+                        stampAwaitingPlacement = false
                     }
                 }
                 .disabled(editingLocked)
                 .position(x: crayonCenter.x, y: crayonCenter.y)
+                .opacity(showingChecklist ? 0 : 1)
 
                 tapeToolButton(size: tapeSize, isAwaitingPlacement: tapeAwaitingPlacement) {
                     guard !editingLocked else { return }
@@ -147,20 +213,74 @@ struct CanvasBookView: View {
                         startSessionTimerIfNeeded()
                         crayonToolActive = false
                         picAwaitingPlacement = false
+                        stampAwaitingPlacement = false
                     }
                 }
                 .disabled(editingLocked)
                 .position(x: tapeCenter.x, y: tapeCenter.y)
+                .opacity(showingChecklist ? 0 : 1)
 
-                VStack {
-                    canvasHeaderBar(
-                        metrics: m,
-                        canUndo: !undoStack.isEmpty && currentStroke.isEmpty && !editingLocked,
-                        canRedo: !redoStack.isEmpty && currentStroke.isEmpty && !editingLocked,
-                        onUndo: undoLastChange,
-                        onRedo: redoLastChange
+                stampToolButton(size: stampSize, isAwaitingPlacement: stampAwaitingPlacement) {
+                    guard !editingLocked else { return }
+                    stampAwaitingPlacement.toggle()
+                    if stampAwaitingPlacement {
+                        startSessionTimerIfNeeded()
+                        crayonToolActive = false
+                        picAwaitingPlacement = false
+                        tapeAwaitingPlacement = false
+                    }
+                }
+                .disabled(editingLocked)
+                .position(x: stampCenter.x, y: stampCenter.y)
+                .opacity(showingChecklist ? 0 : 1)
+
+                stickyNoteToolButton(size: stickyNoteSize) {
+                    guard !editingLocked else { return }
+                    crayonToolActive = false
+                    picAwaitingPlacement = false
+                    tapeAwaitingPlacement = false
+                    stampAwaitingPlacement = false
+                    showingChecklist = true
+                }
+                .disabled(editingLocked)
+                .position(x: stickyNoteCenter.x, y: stickyNoteCenter.y)
+                .opacity(showingChecklist ? 0 : 1)
+
+                Group {
+                    if proxy.size.width > proxy.size.height {
+                        VStack {
+                            canvasHeaderBar(
+                                metrics: m,
+                                canUndo: !undoStack.isEmpty && currentStroke.isEmpty && !editingLocked,
+                                canRedo: !redoStack.isEmpty && currentStroke.isEmpty && !editingLocked,
+                                onUndo: undoLastChange,
+                                onRedo: redoLastChange
+                            )
+                            Spacer(minLength: 0)
+                        }
+                        .ignoresSafeArea(edges: .horizontal)
+                    } else {
+                        VStack {
+                            canvasHeaderBar(
+                                metrics: m,
+                                canUndo: !undoStack.isEmpty && currentStroke.isEmpty && !editingLocked,
+                                canRedo: !redoStack.isEmpty && currentStroke.isEmpty && !editingLocked,
+                                onUndo: undoLastChange,
+                                onRedo: redoLastChange
+                            )
+                            Spacer(minLength: 0)
+                        }
+                    }
+                }
+                .opacity(showingChecklist ? 0 : 1)
+
+                if showingChecklist {
+                    ChecklistPromptScreen(
+                        checkedItems: $checklistItemsChecked,
+                        onClose: { showingChecklist = false }
                     )
-                    Spacer(minLength: 0)
+                    .transition(.opacity)
+                    .zIndex(10)
                 }
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
@@ -170,22 +290,35 @@ struct CanvasBookView: View {
                     crayonToolActive = false
                     picAwaitingPlacement = false
                     tapeAwaitingPlacement = false
-                    if !currentStroke.isEmpty {
-                        currentStroke = []
-                    }
+                    stampAwaitingPlacement = false
+                    // In-flight stroke is cleared in `onChange(of: editingLocked)` after the gallery snapshot.
                 }
             }
             .onChange(of: editingLocked) { _, locked in
                 guard locked, editingDeadline != nil, !didFireTimerExpiryCallback else { return }
                 didFireTimerExpiryCallback = true
-                onTimerExpired()
+                var snapshotStrokes = completedStrokes
+                if !currentStroke.isEmpty {
+                    snapshotStrokes.append(currentStroke)
+                }
+                let thumbnail = renderJournalThumbnail(
+                    spreadSize: spreadSize,
+                    paperStyle: paperStyle,
+                    strokes: snapshotStrokes,
+                    photos: pastedPhotos,
+                    tapes: pastedTapes,
+                    stamps: pastedStamps,
+                    bookCornerRadius: m.bookCornerRadius
+                )
+                onTimerExpired(thumbnail)
+                currentStroke = []
             }
         }
     }
 
     private func startSessionTimerIfNeeded() {
         if editingDeadline == nil {
-            editingDeadline = Date().addingTimeInterval(120)
+            editingDeadline = Date().addingTimeInterval(CanvasEditSession.durationSeconds)
         }
     }
 
@@ -228,6 +361,21 @@ struct CanvasBookView: View {
         tapeAwaitingPlacement = false
     }
 
+    private func pasteStamp(at location: CGPoint, bookSize: CGSize, stampSide: CGFloat) {
+        guard stampAwaitingPlacement, !editingLocked else { return }
+        let side = min(stampSide, bookSize.width - 4, bookSize.height - 4)
+        let half = side * 0.5
+        let clamped = CGPoint(
+            x: min(max(location.x, half), bookSize.width - half),
+            y: min(max(location.y, half), bookSize.height - half)
+        )
+        let stamp = PastedStamp(center: clamped, side: side)
+        pastedStamps.append(stamp)
+        undoStack.append(.stamp(stamp))
+        redoStack.removeAll()
+        stampAwaitingPlacement = false
+    }
+
     private func applyUndo(_ entry: JournalUndoEntry) {
         switch entry {
         case .stroke:
@@ -236,6 +384,8 @@ struct CanvasBookView: View {
             pastedPhotos.removeAll { $0.id == p.id }
         case .tape(let t):
             pastedTapes.removeAll { $0.id == t.id }
+        case .stamp(let s):
+            pastedStamps.removeAll { $0.id == s.id }
         }
     }
 
@@ -247,6 +397,8 @@ struct CanvasBookView: View {
             pastedPhotos.append(p)
         case .tape(let t):
             pastedTapes.append(t)
+        case .stamp(let s):
+            pastedStamps.append(s)
         }
     }
 
@@ -280,7 +432,7 @@ struct CanvasBookView: View {
         onRedo: @escaping () -> Void
     ) -> some View {
         ZStack {
-            HStack(spacing: metrics.headerIconSpacing) {
+            HStack(alignment: .top, spacing: metrics.headerIconSpacing) {
                 Button(action: onHome) {
                     Image(systemName: "house.fill")
                         .font(.system(size: metrics.homeIconSize))
@@ -310,7 +462,7 @@ struct CanvasBookView: View {
 
                 Spacer(minLength: 0)
 
-                HStack(spacing: metrics.undoRedoSpacing) {
+                HStack(alignment: .top, spacing: metrics.undoRedoSpacing) {
                     Button(action: onUndo) {
                         Image(systemName: "arrow.uturn.backward")
                             .font(.system(size: metrics.undoRedoIconSize, weight: .medium))
@@ -336,6 +488,7 @@ struct CanvasBookView: View {
                     .accessibilityLabel(Text("Redo"))
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .top)
         }
         .padding(.leading, metrics.headerLeadingPadding)
         .padding(.trailing, metrics.headerTrailingPadding)
@@ -344,14 +497,14 @@ struct CanvasBookView: View {
 
     private func crayonToolButton(size: CGFloat, isActive: Bool, action: @escaping () -> Void) -> some View {
         return Button(action: action) {
-            Image("bluecrayon")
+            Image("greencrayon")
                 .resizable()
                 .scaledToFit()
                 .frame(width: size, height: size)
                 .shadow(color: .black.opacity(0.18), radius: 4, x: 0, y: 2)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(Text("Blue crayon"))
+        .accessibilityLabel(Text("Green crayon"))
         .accessibilityHint(Text("Tap to turn drawing on or off. When on, drag on the journal to draw."))
     }
 
@@ -382,22 +535,51 @@ struct CanvasBookView: View {
         .accessibilityHint(Text("Tap to select, then tap the journal to place coloured tape."))
     }
 
+    private func stampToolButton(size: CGFloat, isAwaitingPlacement: Bool, action: @escaping () -> Void) -> some View {
+        return Button(action: action) {
+            Image("stamp")
+                .renderingMode(.original)
+                .resizable()
+                .scaledToFit()
+                .frame(width: size, height: size)
+                .shadow(color: .black.opacity(0.2), radius: 4, x: 0, y: 2)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text("Stamp"))
+        .accessibilityHint(Text("Tap to select, then tap the journal to place a pink star stamp."))
+    }
+
+    private func stickyNoteToolButton(size: CGFloat, action: @escaping () -> Void) -> some View {
+        return Button(action: action) {
+            Image("stickynote")
+                .renderingMode(.original)
+                .resizable()
+                .scaledToFit()
+                .frame(width: size, height: size)
+                .shadow(color: .black.opacity(0.2), radius: 4, x: 0, y: 2)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text("Sticky note"))
+        .accessibilityHint(Text("Sticky note tool"))
+    }
+
     private func bookStage(
         spreadSize: CGSize,
         metrics: CanvasBookMetrics,
         editingLocked: Bool,
-        editingDeadline: Date?,
-        timerTick: Date,
         crayonToolActive: Bool,
         picAwaitingPlacement: Bool,
         tapeAwaitingPlacement: Bool,
+        stampAwaitingPlacement: Bool,
         completedStrokes: [[CGPoint]],
         currentStroke: Binding<[CGPoint]>,
         pastedPhotos: [PastedPhoto],
         pastedTapes: [PastedTapeStrip],
+        pastedStamps: [PastedStamp],
         onStrokeCommitted: @escaping ([CGPoint]) -> Void,
         onPastePhoto: @escaping (CGPoint) -> Void,
-        onPasteTape: @escaping (CGPoint) -> Void
+        onPasteTape: @escaping (CGPoint) -> Void,
+        onPasteStamp: @escaping (CGPoint) -> Void
     ) -> some View {
         let w = spreadSize.width
         let h = spreadSize.height
@@ -420,7 +602,7 @@ struct CanvasBookView: View {
             JournalStrokeOverlay(
                 completedStrokes: completedStrokes,
                 currentStroke: currentStroke.wrappedValue,
-                strokeColor: JournalPaperStyle.journalBlueCrayonStroke,
+                strokeColor: JournalPaperStyle.journalGreenCrayonStroke,
                 lineWidth: strokeWidth
             )
             .frame(width: w, height: h)
@@ -436,18 +618,14 @@ struct CanvasBookView: View {
                     .allowsHitTesting(false)
             }
 
-            VStack {
-                JournalEditTimerBar(
-                    deadline: editingDeadline,
-                    referenceDate: timerTick,
-                    isLocked: editingLocked
-                )
-                .opacity(editingDeadline == nil ? 0.55 : 1)
-                .padding(.top, h * 0.03)
-                Spacer(minLength: 0)
+            ForEach(pastedStamps) { stamp in
+                PinkStampStar()
+                    .fill(CanvasBookTheme.stampPink)
+                    .frame(width: stamp.side, height: stamp.side)
+                    .position(stamp.center)
+                    .shadow(color: CanvasBookTheme.stampPink.opacity(0.18), radius: 2, x: 0, y: 1)
+                    .allowsHitTesting(false)
             }
-            .frame(width: w, height: h)
-            .allowsHitTesting(false)
 
             Color.clear
                 .frame(width: w, height: h)
@@ -479,7 +657,7 @@ struct CanvasBookView: View {
                 .frame(width: w, height: h)
                 .contentShape(Rectangle())
                 .allowsHitTesting(
-                    (picAwaitingPlacement || tapeAwaitingPlacement) && !editingLocked && !crayonToolActive
+                    (picAwaitingPlacement || tapeAwaitingPlacement || stampAwaitingPlacement) && !editingLocked && !crayonToolActive
                 )
                 .gesture(
                     DragGesture(minimumDistance: 0)
@@ -491,6 +669,8 @@ struct CanvasBookView: View {
                                 onPastePhoto(p)
                             } else if tapeAwaitingPlacement {
                                 onPasteTape(p)
+                            } else if stampAwaitingPlacement {
+                                onPasteStamp(p)
                             }
                         }
                 )
@@ -517,22 +697,36 @@ private struct CanvasBookMetrics {
     var horizontalPad: CGFloat { shortSide * 0.045 }
 
     var headerLeadingPadding: CGFloat {
-        max(horizontalPad, safeArea.leading + shortSide * 0.024)
+        if isLandscapeLayout {
+            return 8
+        }
+        return max(horizontalPad, safeArea.leading + shortSide * 0.024)
     }
 
     var headerTrailingPadding: CGFloat {
-        max(horizontalPad, safeArea.trailing + shortSide * 0.018)
+        if isLandscapeLayout {
+            return 8
+        }
+        return max(horizontalPad, safeArea.trailing + shortSide * 0.018)
     }
 
     var headerTopPadding: CGFloat {
-        safeArea.top + shortSide * 0.034 + 6
+        if isLandscapeLayout {
+            return safeArea.top + 4
+        }
+        return safeArea.top + shortSide * 0.034 + 6
     }
+
+    private var isLandscapeLayout: Bool { size.width > size.height }
 
     var homeIconSize: CGFloat { min(shortSide * 0.052, 26) }
 
     var homeTapSide: CGFloat { max(48, shortSide * 0.11) }
 
-    var homeIconVerticalLift: CGFloat { -shortSide * 0.032 - 15 }
+    /// In landscape, icons stay on the top edge; portrait keeps a slight optical lift.
+    var homeIconVerticalLift: CGFloat {
+        isLandscapeLayout ? 0 : (-shortSide * 0.032 - 15)
+    }
 
     /// Horizontal inset when fitting the spread so shadows stay inside the safe width.
     var bookFitHorizontalInset: CGFloat { max(20, shortSide * 0.055) }
@@ -569,6 +763,10 @@ private struct CanvasBookMetrics {
 
     var bookCornerRadius: CGFloat { 12 }
 
+    var timerChipHeight: CGFloat { 42 }
+
+    var timerToBookGap: CGFloat { max(8, shortSide * 0.018) }
+
     var headerIconSpacing: CGFloat { shortSide * 0.018 }
 
     var headerArrowIconSize: CGFloat {
@@ -594,7 +792,14 @@ private struct CanvasBookMetrics {
         max(16, shortSide * 0.028)
     }
 
-    /// Tool size uses `bluecrayon` from the asset catalog, scaled ~3× from the previous base (capped by screen).
+    func rightToolCenterX(bookRight: CGFloat, toolWidth: CGFloat, availableWidth: CGFloat) -> CGFloat {
+        let margin = max(14, shortSide * 0.028)
+        let desired = bookRight + margin + toolWidth * 0.5
+        let maxX = availableWidth - safeArea.trailing - toolWidth * 0.5 - 8
+        return min(desired, maxX)
+    }
+
+    /// Tool size uses `greencrayon` from the asset catalog, scaled ~3× from the previous base (capped by screen).
     func crayonToolSide(forBookHeight bookH: CGFloat) -> CGFloat {
         let base = clamp(bookH * 0.19, min: 44, max: 88)
         let tripled = base * 3
@@ -618,10 +823,239 @@ private struct CanvasBookMetrics {
         let scaled = min(base * 3, shortSide * 0.36, bookH * 0.5)
         return max(48, scaled)
     }
+
+    func stampToolSide(forBookHeight bookH: CGFloat) -> CGFloat {
+        clamp(bookH * 0.24, min: 56, max: 96)
+    }
+
+    func stickyNoteToolSide(forBookHeight bookH: CGFloat) -> CGFloat {
+        clamp(bookH * 0.50, min: 116, max: 200)
+    }
+
+    func stampPasteSide(forBookHeight bookH: CGFloat) -> CGFloat {
+        clamp(bookH * 0.14, min: 34, max: 58)
+    }
 }
 
 private func clamp(_ value: CGFloat, min minValue: CGFloat, max maxValue: CGFloat) -> CGFloat {
     Swift.min(Swift.max(value, minValue), maxValue)
+}
+
+// MARK: - Checklist prompt screen
+
+private struct ChecklistPromptScreen: View {
+    @Binding var checkedItems: [Bool]
+    var onClose: () -> Void
+
+    private static let prompts = [
+        "Draw a flower you saw recently",
+        "Write 10 words that describe your day",
+        "Add a picture of a sunset",
+    ]
+
+    var body: some View {
+        GeometryReader { proxy in
+            let shortSide = min(proxy.size.width, proxy.size.height)
+            let noteWidth = min(proxy.size.width * 0.86, shortSide * 1.84)
+            let noteHeight = min(proxy.size.height * 0.88, shortSide * 1.10)
+
+            ZStack {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .ignoresSafeArea()
+
+                ZStack(alignment: .topTrailing) {
+                    Image("note")
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: noteWidth, height: noteHeight)
+                        .clipped()
+                        .shadow(color: .black.opacity(0.24), radius: 12, x: 0, y: 6)
+                        .accessibilityHidden(true)
+
+                    VStack(alignment: .leading, spacing: max(10, noteHeight * 0.045)) {
+                        Spacer()
+                            .frame(height: noteHeight * 0.30)
+
+                        ForEach(Self.prompts.indices, id: \.self) { index in
+                            ChecklistPromptRow(
+                                prompt: Self.prompts[index],
+                                isChecked: checkedItems.indices.contains(index) ? checkedItems[index] : false,
+                                fontSize: clamp(shortSide * 0.032, min: 11, max: 15),
+                                checkboxSide: clamp(shortSide * 0.038, min: 15, max: 20)
+                            ) {
+                                togglePrompt(at: index)
+                            }
+                        }
+
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.leading, noteWidth * 0.12)
+                    .padding(.trailing, noteWidth * 0.18)
+                    .frame(width: noteWidth, height: noteHeight)
+
+                    Button(action: onClose) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: max(15, shortSide * 0.04), weight: .semibold))
+                            .foregroundStyle(Color.black.opacity(0.74))
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, noteHeight * 0.08)
+                    .padding(.trailing, noteWidth * 0.08 + 70)
+                    .accessibilityLabel(Text("Close checklist"))
+                }
+                .frame(width: noteWidth, height: noteHeight)
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height)
+        }
+    }
+
+    private func togglePrompt(at index: Int) {
+        guard checkedItems.indices.contains(index) else { return }
+        checkedItems[index].toggle()
+    }
+}
+
+private struct ChecklistPromptRow: View {
+    let prompt: String
+    let isChecked: Bool
+    let fontSize: CGFloat
+    let checkboxSide: CGFloat
+    var onToggle: () -> Void
+
+    var body: some View {
+        Button(action: onToggle) {
+            HStack(spacing: 5) {
+                Text(prompt)
+                    .font(.system(size: fontSize, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Color.black.opacity(0.82))
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.65)
+
+                ZStack {
+                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        .stroke(Color.black.opacity(0.36), lineWidth: 1.3)
+                        .frame(width: checkboxSide, height: checkboxSide)
+
+                    if isChecked {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: checkboxSide * 0.72, weight: .bold))
+                            .foregroundStyle(Color.black.opacity(0.7))
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(Color.white.opacity(0.24))
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text(prompt))
+        .accessibilityValue(Text(isChecked ? "Checked" : "Unchecked"))
+    }
+}
+
+// MARK: - Gallery snapshot (render spread off-screen)
+
+@MainActor
+private func renderJournalThumbnail(
+    spreadSize: CGSize,
+    paperStyle: JournalPaperStyle,
+    strokes: [[CGPoint]],
+    photos: [PastedPhoto],
+    tapes: [PastedTapeStrip],
+    stamps: [PastedStamp],
+    bookCornerRadius: CGFloat
+) -> CGImage? {
+    guard spreadSize.width > 8, spreadSize.height > 8 else { return nil }
+    let content = JournalSpreadStaticView(
+        spreadSize: spreadSize,
+        paperStyle: paperStyle,
+        strokes: strokes,
+        photos: photos,
+        tapes: tapes,
+        stamps: stamps,
+        bookCornerRadius: bookCornerRadius
+    )
+    let renderer = ImageRenderer(content: content)
+    renderer.scale = displayPixelScale()
+    return renderer.cgImage
+}
+
+@MainActor
+private func displayPixelScale() -> CGFloat {
+#if os(iOS)
+    return UIScreen.main.scale
+#elseif os(macOS)
+    return NSScreen.main?.backingScaleFactor ?? 2
+#else
+    return 2
+#endif
+}
+
+/// Non-interactive spread for `ImageRenderer` (matches `bookStage` layers minus timer and gestures).
+private struct JournalSpreadStaticView: View {
+    let spreadSize: CGSize
+    let paperStyle: JournalPaperStyle
+    let strokes: [[CGPoint]]
+    let photos: [PastedPhoto]
+    let tapes: [PastedTapeStrip]
+    let stamps: [PastedStamp]
+    let bookCornerRadius: CGFloat
+
+    var body: some View {
+        let w = spreadSize.width
+        let h = spreadSize.height
+        let strokeWidth = max(2.8, w * 0.0065)
+        ZStack {
+            OpenBookSpreadCanvas(style: paperStyle)
+                .frame(width: w, height: h)
+
+            ForEach(photos) { photo in
+                Image("pic")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: photo.side, height: photo.side)
+                    .position(photo.center)
+            }
+
+            JournalStrokeOverlay(
+                completedStrokes: strokes,
+                currentStroke: [],
+                strokeColor: JournalPaperStyle.journalGreenCrayonStroke,
+                lineWidth: strokeWidth
+            )
+            .frame(width: w, height: h)
+
+            ForEach(tapes) { strip in
+                Image("tapecoloured")
+                    .renderingMode(.original)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: strip.width, height: strip.height)
+                    .position(strip.center)
+            }
+
+            ForEach(stamps) { stamp in
+                PinkStampStar()
+                    .fill(CanvasBookTheme.stampPink)
+                    .frame(width: stamp.side, height: stamp.side)
+                    .position(stamp.center)
+            }
+        }
+        .frame(width: w, height: h)
+        .background(
+            RoundedRectangle(cornerRadius: bookCornerRadius, style: .continuous)
+                .fill(JournalPaperStyle.journalPagePaperFill)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: bookCornerRadius, style: .continuous))
+    }
 }
 
 // MARK: - Edit session timer (on journal)
@@ -630,10 +1064,11 @@ private struct JournalEditTimerBar: View {
     let deadline: Date?
     let referenceDate: Date
     let isLocked: Bool
+    let totalSessionSeconds: Int
 
     private var displaySeconds: Int {
         if isLocked { return 0 }
-        guard let deadline else { return 120 }
+        guard let deadline else { return totalSessionSeconds }
         return max(0, Int(ceil(deadline.timeIntervalSince(referenceDate))))
     }
 
@@ -695,6 +1130,36 @@ private struct JournalStrokeOverlay: View {
             with: .color(strokeColor),
             style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round)
         )
+    }
+}
+
+// MARK: - Stamp shape
+
+private struct PinkStampStar: Shape {
+    func path(in rect: CGRect) -> Path {
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        let outerRadius = min(rect.width, rect.height) * 0.5
+        let innerRadius = outerRadius * 0.42
+        var path = Path()
+
+        for pointIndex in 0..<10 {
+            let isOuterPoint = pointIndex.isMultiple(of: 2)
+            let radius = isOuterPoint ? outerRadius : innerRadius
+            let angle = -CGFloat.pi / 2 + CGFloat(pointIndex) * CGFloat.pi / 5
+            let point = CGPoint(
+                x: center.x + cos(angle) * radius,
+                y: center.y + sin(angle) * radius
+            )
+
+            if pointIndex == 0 {
+                path.move(to: point)
+            } else {
+                path.addLine(to: point)
+            }
+        }
+
+        path.closeSubpath()
+        return path
     }
 }
 
@@ -789,7 +1254,7 @@ private struct OpenBookSpreadCanvas: View {
         paperStyle: .dotted,
         onHome: {},
         onBack: {},
-        onTimerExpired: {}
+        onTimerExpired: { _ in }
     )
     .previewInterfaceOrientation(.landscapeLeft)
 }

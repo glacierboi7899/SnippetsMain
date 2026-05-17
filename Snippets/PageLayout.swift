@@ -135,7 +135,14 @@ struct PageLayoutView: View {
                     .ignoresSafeArea()
 
                 VStack(spacing: 0) {
-                    headerBar(metrics: m)
+                    Group {
+                        if proxy.size.width > proxy.size.height {
+                            headerBar(metrics: m)
+                                .ignoresSafeArea(edges: .horizontal)
+                        } else {
+                            headerBar(metrics: m)
+                        }
+                    }
 
                     Spacer(minLength: m.headerToContentGap)
 
@@ -194,6 +201,7 @@ struct PageLayoutView: View {
 
                 Spacer(minLength: 0)
             }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .padding(.leading, metrics.headerLeadingPadding)
         .padding(.trailing, metrics.headerTrailingPadding)
@@ -316,17 +324,28 @@ private struct PageLayoutMetrics {
 
     /// Keeps home + title inside safe areas / curved edges (responsive).
     var headerLeadingPadding: CGFloat {
-        max(horizontalPad, safeArea.leading + shortSide * 0.024)
+        if isLandscapeLayout {
+            return 8
+        }
+        return max(horizontalPad, safeArea.leading + shortSide * 0.024)
     }
 
     var headerTrailingPadding: CGFloat {
-        max(horizontalPad, safeArea.trailing + shortSide * 0.018)
+        if isLandscapeLayout {
+            return 8
+        }
+        return max(horizontalPad, safeArea.trailing + shortSide * 0.018)
     }
 
     /// Extra top inset so the title and home icon are not clipped by the notch / status bar.
     var headerTopPadding: CGFloat {
-        safeArea.top + shortSide * 0.034 + 6
+        if isLandscapeLayout {
+            return safeArea.top + 4
+        }
+        return safeArea.top + shortSide * 0.034 + 6
     }
+
+    private var isLandscapeLayout: Bool { size.width > size.height }
 
     /// Horizontal inset on the title so it clears the home control when centered.
     var titleHorizontalReserve: CGFloat {
@@ -341,8 +360,10 @@ private struct PageLayoutMetrics {
 
     var homeTapSide: CGFloat { max(48, shortSide * 0.11) }
 
-    /// Negative offset moves the home control upward without clipping the title.
-    var homeIconVerticalLift: CGFloat { -shortSide * 0.032 - 15 }
+    /// Negative offset moves the home control upward without clipping the title (portrait only).
+    var homeIconVerticalLift: CGFloat {
+        isLandscapeLayout ? 0 : (-shortSide * 0.032 - 15)
+    }
 
     var headerToContentGap: CGFloat { shortSide * 0.026 }
 
